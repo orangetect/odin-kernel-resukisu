@@ -61,6 +61,13 @@ jobs:
           echo "BakaSU HEAD: $(git -C kernel/KernelSU rev-parse --short HEAD)"
           echo "BakaSU tag : $(git -C kernel/KernelSU describe --abbrev=0 --tags 2>/dev/null || echo unknown)"
 
+      # BakaSU 4.2 使用 susfs_*_no_su / zygote_next 新 helper，odin 树自带
+      # SUSFS v2.1.0 只有 umounted 名字；不补别名会在 vmlinux 链接时报
+      # undefined symbol；脚本在 fs/susfs.c 里补真实函数。
+      - name: BakaSU <-> SUSFS v2.1.0 helper compat functions
+        run: |
+          bash ci/scripts/susfs-bakasu-compat.sh "$PWD/kernel"
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
