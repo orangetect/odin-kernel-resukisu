@@ -1,4 +1,4 @@
-name: Build venus kernel with FinaSU (SUSFS on, preflight v2)
+name: Build odin kernel with FinaSU (SUSFS on, preflight v2)
 
 on:
   workflow_dispatch:
@@ -43,19 +43,36 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: ci
+
       - name: Checkout kernel sources
         run: |
           git clone --depth 1 --branch "${{ inputs.kernel_ref || 'main' }}" \
             "https://github.com/${{ inputs.kernel_repo || 'cvbyisme/android_kernel_xiaomi_sm8350_miyume' }}.git" kernel
           echo "kernel HEAD: $(git -C kernel rev-parse --short HEAD)"
 
-          # 检查是否包含 odin 设备树，并以 venus_defconfig 为基底合成完整的 odin_defconfig
+          echo "=== Checking odin DTS and Configs ==="
           find kernel/arch/arm64/boot/dts -name "*odin*" || true
-          BASE_CFG=$(find kernel/arch/arm64/configs -name "*venus*" | head -1)
-          echo "Base config found: $BASE_CFG"
-          cp "$BASE_CFG" kernel/arch/arm64/configs/odin_defconfig
-          curl -sSL https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm8350/lineage-21/arch/arm64/configs/vendor/odin_QGKI.config \
-            >> kernel/arch/arm64/configs/odin_defconfig || true
+          ODIN_CFG=$(find kernel/arch/arm64/configs -iname "*odin*" | head -1)
+
+          if [ -n "$ODIN_CFG" ]; then
+            echo "Found native odin config: $ODIN_CFG"
+            if [ "$ODIN_CFG" != "kernel/arch/arm64/configs/odin_defconfig" ]; then
+              cp "$ODIN_CFG" kernel/arch/arm64/configs/odin_defconfig
+            fi
+          else
+            echo "Native odin config not found, synthesizing from venus base..."
+            BASE_CFG=$(find kernel/arch/arm64/configs -name "*venus*" | head -1)
+            echo "Base config found: $BASE_CFG"
+            cp "$BASE_CFG" kernel/arch/arm64/configs/odin_defconfig
+            # 剔除所有 VENUS 专属机型宏，防止 #ifdef 分支抢占导致 MIX 4 触控/充电失效
+            sed -i '/CONFIG_MACH_XIAOMI_VENUS/d' kernel/arch/arm64/configs/odin_defconfig
+            echo "# CONFIG_MACH_XIAOMI_VENUS is not set" >> kernel/arch/arm64/configs/odin_defconfig
+            echo "CONFIG_MACH_XIAOMI_ODIN=y" >> kernel/arch/arm64/configs/odin_defconfig
+            curl -fLsS https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm8350/lineage-21/arch/arm64/configs/vendor/xiaomi/odin.config \
+              >> kernel/arch/arm64/configs/odin_defconfig \
+              || curl -fLsS https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm8350/lineage-21/arch/arm64/configs/vendor/odin_QGKI.config \
+              >> kernel/arch/arm64/configs/odin_defconfig || true
+          fi
 
       # 功耗调优：内核调度源码补丁（input boost 默认关、io-is-busy 默认关、
       # schedutil 强制 PELT 信号路径——WALT 信号路径在本机会卡小米 logo）。
@@ -78,7 +95,7 @@ jobs:
           KDIR_OVERRIDE="$PWD/kernel" bash ci/scripts/susfs-setup.sh \
             || echo "::warning::susfs-setup partially applied; preflight compensates"
 
-      # FinaSU v1.4.2 管理器的 ksud 要求内核 SUSFS 版本字符串精确等于 v2.3.0，
+      # FinaSU v1.4.2+ 管理器的 ksud 要求内核 SUSFS 版本字符串精确等于 v2.3.0，
       # 否则判定 unknown_protocol（SUSFS 页只读、全功能不可用）。内核树是
       # v2.1.0，但 wire 协议（CMD 编号 + st_susfs 结构）与 v2.3.0 完全兼容，
       # 故让内核如实汇报 v2.3.0，并顺手修 ctime 伪装标志的笔误。
@@ -167,7 +184,7 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: venus-${{ inputs.disable_preinit }}-${{ inputs.disable_susfs }}
+          key: odin-${{ inputs.disable_preinit }}-${{ inputs.disable_susfs }}
           max-size: 2G
 
       # 快速语法门：只编 KSU 子系统，~3-5 分钟暴露编译错误，全量构建前的闸门。
@@ -180,6 +197,8 @@ jobs:
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
 
           make -j$(nproc) O=out odin_defconfig
+          ./scripts/config --file out/.config --disable MACH_XIAOMI_VENUS --enable MACH_XIAOMI_ODIN
+
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then
             ./scripts/config --file out/.config \
               --enable KPROBES --enable KSU --enable KSU_DYNAMIC_MANAGER \
@@ -230,6 +249,7 @@ jobs:
           echo "kernel localversion: -$NEKO_VER"
 
           make -j$(nproc) O=out odin_defconfig
+          ./scripts/config --file out/.config --disable MACH_XIAOMI_VENUS --enable MACH_XIAOMI_ODIN
 
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then
             ./scripts/config --file out/.config \
@@ -264,8 +284,13 @@ jobs:
           make -j$(nproc) O=out security/selinux/flask.h \
             || make -j$(nproc) O=out security/selinux/
 
-          echo "=== SUSFS / KSU config check ==="
-          grep -E 'CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPROBES|CONFIG_THREAD_INFO' out/.config || true
+          echo "=== SUSFS / KSU / Device config check ==="
+          grep -E 'CONFIG_MACH_XIAOMI|CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPROBES|CONFIG_THREAD_INFO' out/.config || true
+
+          if grep -qx "CONFIG_MACH_XIAOMI_VENUS=y" out/.config; then
+            echo "::error::CONFIG_MACH_XIAOMI_VENUS=y is still active! This will break odin hardware."
+            exit 1
+          fi
 
           MISSING=0
           SYMS="CONFIG_KSU CONFIG_KPROBES"
@@ -319,9 +344,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: venus-finaus-kernel
+          name: odin-finasu-kernel
           path: artifact/*
           if-no-files-found: error
+
       - name: Package AnyKernel3 zip
         run: |
           set -e
@@ -331,7 +357,6 @@ jobs:
           mkdir -p patch
           cp ../kernel/out/arch/arm64/boot/Image .
           # ---- 可选：内置 ksud（embed_ksud=false 用于验证内核侧 su fallback）----
-          # 注意：boolean 输入在表达式里用 || 处理会把 false 当成 falsy 而回落到 true，因此这里直接引用字串。
           EMBED_KSUD="${{ inputs.embed_ksud }}"
           EMBED_KSUD="${EMBED_KSUD:-true}"
           echo "EMBED_KSUD=$EMBED_KSUD"
@@ -357,31 +382,30 @@ jobs:
           #   包内无 ksud -> 删除设备上的旧版本（旧 ksud + 新管理器会后台重试，
           #   实测空载 2.65W vs 匹配版本 1.32W）。
           cat ../ci/scripts/ak3-ksud.sh >> anykernel.sh
-          
+
           # ---- TWRP 显示：内核详细信息 + 共创者 ----
           BUILD_STAMP=$(date -u +%Y%m%d-%H%MZ)
           CLANG_STR=$(clang --version | head -1 | cut -c1-48)
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then SUSFS_STATE=disabled; else SUSFS_STATE=enabled; fi
           if [ "$EMBED_KSUD" = "true" ]; then KSUD_STATE=embedded; else KSUD_STATE="not_embedded (stale removed)"; fi
-          # 不加引号的 heredoc：让 $NEKO_VER / $BUILD_STAMP 等在 CI 侧就展开
-          cat >> anykernel.sh <<AK3EOF
-          
+          # 使用 <<-AK3EOF 允许脚本内使用 Tab 缩进并确保结束符正常闭合
+          cat >> anykernel.sh <<-AK3EOF
+
           ui_print " ";
-          ui_print "  venus (Xiaomi 11) FinaSU kernel";
+          ui_print "  odin (Xiaomi MIX 4) FinaSU kernel";
           ui_print "  kernel : 5.4.302-$NEKO_VER";
           ui_print "  build  : $BUILD_STAMP UTC";
           ui_print "  clang  : $CLANG_STR";
           ui_print "  root   : FinaSU / KernelSU, signature slot2";
           ui_print "  susfs  : $SUSFS_STATE";
           ui_print "  ksud   : $KSUD_STATE";
-          ui_print "  author : cvbyisme & LuNanzhi";
+          ui_print "  author : cvbyisme & LuNanzhi (odin port)";
           ui_print " ";
           AK3EOF
-          
 
-          sed -i "s/^kernel.string=.*/kernel.string=venus-FinaSU 5.4.302-$NEKO_VER by cvby/" anykernel.sh
-          sed -i "s/^device.name1=.*/device.name1=venus/" anykernel.sh
-          sed -i "s/^device.name2=.*/device.name2=/" anykernel.sh
+          sed -i "s/^kernel.string=.*/kernel.string=odin-FinaSU 5.4.302-$NEKO_VER/" anykernel.sh
+          sed -i "s/^device.name1=.*/device.name1=odin/" anykernel.sh
+          sed -i "s/^device.name2=.*/device.name2=mix4/" anykernel.sh
           sed -i "s/^device.name3=.*/device.name3=/" anykernel.sh
           sed -i "s/^device.name4=.*/device.name4=/" anykernel.sh
           sed -i "s/^device.name5=.*/device.name5=/" anykernel.sh
@@ -389,7 +413,7 @@ jobs:
           sed -i "s/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1;/" anykernel.sh
           sed -i '/^backup_file /d;/^replace_string /d;/^insert_line /d;/^append_file /d;/^patch_fstab /d' anykernel.sh
           chmod +x anykernel.sh
-          NAME="venus-FinaSU-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
+          NAME="odin-FinaSU-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
           zip -r9 "../${NAME}.zip" . -x "*.git*" > /dev/null
           cd ..
           ls -lh *.zip
@@ -398,10 +422,10 @@ jobs:
       - name: Publish test release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: venus-test-${{ github.run_number }}
-          name: venus FinaSU kernel test build
+          tag_name: odin-test-${{ github.run_number }}
+          name: odin FinaSU kernel test build
           body: |
-            venus (Xiaomi 11) FinaSU built-in - TEST BUILD
+            odin (Xiaomi MIX 4) FinaSU built-in - TEST BUILD
 
             NOT VERIFIED ON DEVICE. Flash at your own risk.
 
@@ -412,7 +436,7 @@ jobs:
             - ksud embedded: ${{ env.KSUD_EMBED || 'false' }}
 
             Install: flash in TWRP or a kernel flasher app.
-            Manager: FinaSU manager matching the slot2 signature.
+            Manager: FinaSU v1.5.0 manager matching the slot2 signature.
             Rollback: keep a stock boot.img backup.
           files: ${{ github.workspace }}/${{ env.AK3_NAME }}.zip
           prerelease: true
