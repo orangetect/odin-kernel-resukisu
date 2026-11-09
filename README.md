@@ -97,13 +97,13 @@ workflow 会显式 `--disable KSU_TRACEPOINT_HOOK`，并在配置门禁里检查
 ```text
 clone kernel (resukisu) → sched-tune
 → 克隆 BakaSU（完整 git 历史，tag v4.2.0-rc3）覆盖 KernelSU/
-→ clang 14.0.6 构建 odin_defconfig（KSU_SUSFS inline）
+→ 预生成 init/version.o（compile.h）与 security/selinux\n→ clang 14.0.6 构建 odin_defconfig（KSU_SUSFS inline）
 → 配置门禁（KSU / KSU_SUSFS / sub-options / KPROBES / 非 TRACEPOINT）
 → Image + Image.gz
 → AnyKernel3（device=odin, BLOCK=/dev/block/bootdevice/by-name/boot）
 ```
 
-> BakaSU 的 Kbuild 会用 `git describe` / `git rev-list --count` 计算版本，
+> BakaSU 的 `core/init.c` 会 `include <generated/compile.h>`，该头由 `make init/version.o` 生成\n> （不是 `make prepare`），workflow 已显式预生成，避免 “No such file” 报错。\n>\n> BakaSU 的 Kbuild 会用 `git describe` / `git rev-list --count` 计算版本，
 > 并要求 `KernelSU` 是真正的 git 仓库，所以 workflow 对 BakaSU 使用**完整 clone**，不能用 `--depth 1`。
 
 ---
