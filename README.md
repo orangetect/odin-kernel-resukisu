@@ -1,4 +1,4 @@
-# odin-kernel-bakasu
+# odin-kernel-Resukisu
 
 > 小米 MIX 4（odin / SM8350-AC）5.4 非 GKI 内核，内置 [BakaSU](https://github.com/Baka-SU/BakaSU)。
 >
