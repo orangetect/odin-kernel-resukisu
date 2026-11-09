@@ -165,13 +165,17 @@ jobs:
         run: |
           mkdir -p $HOME/toolchain
           cd $HOME/toolchain
-          curl -sSL --retry 5 --retry-delay 5 -o clang.tar.gz \
-            https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20261022-release/Clang-14.0.6-20261022.tar.gz
-          tar -xzf clang.tar.gz
-          rm -f clang.tar.gz
+          CLANG_URL="https://github.com/ZyCromerZ/Clang/releases/download/Clang-14.0.6-20261022-release/Clang-14.0.6-20261022.tar.gz"
+          if curl -fL --retry 5 --retry-delay 5 -o clang.tar.gz "$CLANG_URL"; then
+            tar -xzf clang.tar.gz
+            rm -f clang.tar.gz
+          else
+            echo "::warning::Release tarball download failed, falling back to git clone mirror..."
+            git clone --depth 1 https://github.com/EmanuelCN/zyc_clang-14.git zyc-clang
+          fi
           CLANG_BIN=$(find "$HOME/toolchain" -maxdepth 4 -name clang \( -type f -o -type l \) | head -1)
           if [ -z "$CLANG_BIN" ]; then
-            echo "::error::clang binary not found in toolchain tarball"
+            echo "::error::clang binary not found in toolchain directory"
             find "$HOME/toolchain" -maxdepth 3 | head -30
             exit 1
           fi
