@@ -97,13 +97,22 @@ workflow 会显式 `--disable KSU_TRACEPOINT_HOOK`，并在配置门禁里检查
 ```text
 clone kernel (resukisu) → sched-tune
 → 克隆 BakaSU（完整 git 历史，tag v4.2.0-rc3）覆盖 KernelSU/
-→ 预生成 init/version.o（compile.h）与 security/selinux\n→ clang 14.0.6 构建 odin_defconfig（KSU_SUSFS inline）
+→ susfs-bakasu-compat（v2.1.0 helper 兼容函数）
+→ 预生成 init/version.o（compile.h）与 security/selinux
+→ clang 14.0.6 构建 odin_defconfig（KSU_SUSFS inline）
 → 配置门禁（KSU / KSU_SUSFS / sub-options / KPROBES / 非 TRACEPOINT）
 → Image + Image.gz
 → AnyKernel3（device=odin, BLOCK=/dev/block/bootdevice/by-name/boot）
 ```
 
-> BakaSU 的 `core/init.c` 会 `include <generated/compile.h>`，该头由 `make init/version.o` 生成\n> （不是 `make prepare`），workflow 已显式预生成，避免 “No such file” 报错。\n>\n> BakaSU 的 Kbuild 会用 `git describe` / `git rev-list --count` 计算版本，
+> BakaSU 4.2 使用 `susfs_*_no_su` / `zygote_next` 新 helper 名，而 odin 树的 SUSFS v2.1.0
+> 只有 `*_umounted` 名字；`scripts/susfs-bakasu-compat.sh` 会在构建前补真实函数，
+> 否则 vmlinux 链接会报 `undefined symbol: susfs_set_current_proc_no_su`。
+>
+> BakaSU 的 `core/init.c` 会 `include <generated/compile.h>`，该头由 `make init/version.o` 生成
+> （不是 `make prepare`），workflow 已显式预生成，避免 “No such file” 报错。
+>
+> BakaSU 的 Kbuild 会用 `git describe` / `git rev-list --count` 计算版本，
 > 并要求 `KernelSU` 是真正的 git 仓库，所以 workflow 对 BakaSU 使用**完整 clone**，不能用 `--depth 1`。
 
 ---
@@ -129,6 +138,7 @@ clone kernel (resukisu) → sched-tune
 
 | 文件 | 作用 |
 |---|---|
+| `scripts/susfs-bakasu-compat.sh` | 在 fs/susfs.c 补齐 BakaSU 4.2 需要的 SUSFS helper 函数 |
 | `scripts/power-tune.sh` | 默认 governor 改 `schedutil` |
 | `scripts/sched-tune.sh` | 应用 `sched-patches/*.patch`（幂等 + `git apply --check` 门禁） |
 | `scripts/sched-patches/pelt-force.patch` | schedutil 强制 PELT util 路径（按 odin 源码生成） |
