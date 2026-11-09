@@ -78,7 +78,7 @@ jobs:
       # schedutil 强制 PELT 信号路径——WALT 信号路径在本机会卡小米 logo）。
       - name: Scheduler power patches (input-boost off, io-is-busy off, schedutil PELT)
         run: |
-          bash ci/scripts/sched-tune.sh "$PWD/kernel"|| true
+          bash ci/scripts/sched-tune.sh "$PWD/kernel" || true
 
       - name: Clone FinaSU into KernelSU/
         run: |
