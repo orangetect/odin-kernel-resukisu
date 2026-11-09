@@ -69,7 +69,7 @@ jobs:
             NOT VERIFIED ON DEVICE. Flash at your own risk.
 
             - Kernel 5.4.302, ZyC clang 14.0.6
-            - BakaSU root (KernelSU based), SUSFS inline
+            - BakaSU root (KernelSU based)
             - SUSFS 5.4 integrated in the kernel tree
             - Source artifact from run ${{ inputs.run_id }}
 

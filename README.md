@@ -123,7 +123,7 @@ clone kernel (resukisu) → sched-tune
 
 | 文件 | 作用 |
 |---|---|
-| `build-bakasu.yml` | **主线**：BakaSU v4.2.0-rc3 + SUSFS inline + 功耗调优 + ksud 内嵌；发布 `odin-bakasu-<n>` |
+| `build-bakasu.yml` | **主线**：BakaSU v4.2.0-rc3 + `root_mode`（inline/manual）+ 功耗调优 + ksud 内嵌；发布 `odin-bakasu-<n>` |
 | `pure.yml` | 不含 root/SUSFS 的纯内核，用于排查基线 / 工具链 / 模块 vermagic |
 | `pack.yml` / `pack-pure.yml` | 对已有 run 的 artifact 重新打 AnyKernel3 包 |
 
@@ -131,6 +131,7 @@ clone kernel (resukisu) → sched-tune
 
 - `kernel_repo` / `kernel_ref`：默认 `Inkypen79/kernel_xiaomi_odin` / `resukisu`
 - `bakasu_ref`：BakaSU ref，默认 `v4.2.0-rc3`
+- `root_mode`：`susfs_inline`（默认，SUSFS）/ `manual`（5.4 更稳，仅 root，无 SUSFS）
 - `ksud_apk_url`：用于抽 `libksud.so` 的管理器 APK，默认对应 v4.2.0-rc3 的 arm64 APK
 - `embed_ksud`：是否在 AK3 内嵌匹配版本的 ksud（默认 true）
 
@@ -138,7 +139,8 @@ clone kernel (resukisu) → sched-tune
 
 | 文件 | 作用 |
 |---|---|
-| `scripts/susfs-bakasu-compat.sh` | 在 fs/susfs.c 补齐 BakaSU 4.2 需要的 SUSFS helper 函数 |
+| `scripts/susfs-bakasu-compat.sh` | inline 模式：在 fs/susfs.c 补齐 BakaSU 4.2 需要的 SUSFS helper 函数 |
+| `scripts/ksu-manual-hooks.sh` | manual 模式：给 odin 树补 `CONFIG_KSU_MANUAL_HOOK` 调用点 |
 | `scripts/power-tune.sh` | 默认 governor 改 `schedutil` |
 | `scripts/sched-tune.sh` | 应用 `sched-patches/*.patch`（幂等 + `git apply --check` 门禁） |
 | `scripts/sched-patches/pelt-force.patch` | schedutil 强制 PELT util 路径（按 odin 源码生成） |

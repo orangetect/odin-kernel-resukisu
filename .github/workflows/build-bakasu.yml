@@ -7,6 +7,14 @@ on:
         description: 'BakaSU git ref (tag/branch/commit)'
         required: false
         default: 'v4.2.0-rc3'
+      root_mode:
+        description: 'root backend: susfs_inline (SUSFS) or manual (root only, no SUSFS)'
+        required: false
+        default: susfs_inline
+        type: choice
+        options:
+          - susfs_inline
+          - manual
       localversion:
         description: '可选：覆盖内核 LOCALVERSION 后缀（如 -inkypen-resuki-v2，用于匹配 ROM 模块 vermagic）；留空用 Baka-CL-日期-随机'
         required: false
@@ -68,7 +76,13 @@ jobs:
       # BakaSU 4.2 使用 susfs_*_no_su / zygote_next 新 helper，odin 树自带
       # SUSFS v2.1.0 只有 umounted 名字；不补别名会在 vmlinux 链接时报
       # undefined symbol；脚本在 fs/susfs.c 里补真实函数。
-      - name: BakaSU <-> SUSFS v2.1.0 helper compat functions
+      - name: BakaSU manual hook call sites (manual mode only)
+        if: ${{ inputs.root_mode == 'manual' }}
+        run: |
+          bash ci/scripts/ksu-manual-hooks.sh "$PWD/kernel"
+
+      - name: BakaSU <-> SUSFS v2.1.0 helper compat functions (inline mode only)
+        if: ${{ inputs.root_mode != 'manual' }}
         run: |
           bash ci/scripts/susfs-bakasu-compat.sh "$PWD/kernel"
 
@@ -143,15 +157,22 @@ jobs:
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
 
           make -j$(nproc) O=out odin_defconfig
-          ./scripts/config --file out/.config \
-            --enable KPROBES --enable KSU --enable KSU_SUSFS \
-            --enable KSU_SUSFS_SUS_PATH --enable KSU_SUSFS_SUS_MOUNT \
-            --enable KSU_SUSFS_SUS_KSTAT --enable KSU_SUSFS_SPOOF_UNAME \
-            --enable KSU_SUSFS_ENABLE_LOG --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            --enable KSU_SUSFS_OPEN_REDIRECT --enable KSU_SUSFS_SUS_MAP
+          ROOT_MODE="${{ inputs.root_mode || 'susfs_inline' }}"
+          echo "ROOT_MODE=$ROOT_MODE" >> $GITHUB_ENV
+          if [ "$ROOT_MODE" = "manual" ]; then
+            ./scripts/config --file out/.config \
+              --enable KPROBES --enable KSU --enable KSU_MANUAL_HOOK
+          else
+            ./scripts/config --file out/.config \
+              --enable KPROBES --enable KSU --enable KSU_SUSFS \
+              --enable KSU_SUSFS_SUS_PATH --enable KSU_SUSFS_SUS_MOUNT \
+              --enable KSU_SUSFS_SUS_KSTAT --enable KSU_SUSFS_SPOOF_UNAME \
+              --enable KSU_SUSFS_ENABLE_LOG --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+              --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+              --enable KSU_SUSFS_OPEN_REDIRECT --enable KSU_SUSFS_SUS_MAP
+          fi
           # BakaSU 的默认 hook 是 tracepoint（只支持 GKI 2.0/5.10+），
-          # 5.4 必须走 SUSFS inline；确保 TRACEPOINT 没被 defconfig 带进来。
+          # 5.4 必须走 SUSFS inline 或 manual；确保 TRACEPOINT 没被带进来。
           ./scripts/config --file out/.config --disable KSU_TRACEPOINT_HOOK
 
           # ---- 功耗调优：默认 governor = schedutil ----
@@ -191,14 +212,24 @@ jobs:
           echo "kernel localversion: -$BAKA_VER"
 
           make -j$(nproc) O=out odin_defconfig
-          ./scripts/config --file out/.config \
-            --enable KPROBES --enable KSU --enable KSU_SUSFS \
-            --enable KSU_SUSFS_SUS_PATH --enable KSU_SUSFS_SUS_MOUNT \
-            --enable KSU_SUSFS_SUS_KSTAT --enable KSU_SUSFS_SPOOF_UNAME \
-            --enable KSU_SUSFS_ENABLE_LOG --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            --enable KSU_SUSFS_OPEN_REDIRECT --enable KSU_SUSFS_SUS_MAP
+          ROOT_MODE="${{ inputs.root_mode || 'susfs_inline' }}"
+          echo "ROOT_MODE=$ROOT_MODE" >> $GITHUB_ENV
+          if [ "$ROOT_MODE" = "manual" ]; then
+            ./scripts/config --file out/.config \
+              --enable KPROBES --enable KSU --enable KSU_MANUAL_HOOK
+          else
+            ./scripts/config --file out/.config \
+              --enable KPROBES --enable KSU --enable KSU_SUSFS \
+              --enable KSU_SUSFS_SUS_PATH --enable KSU_SUSFS_SUS_MOUNT \
+              --enable KSU_SUSFS_SUS_KSTAT --enable KSU_SUSFS_SPOOF_UNAME \
+              --enable KSU_SUSFS_ENABLE_LOG --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+              --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+              --enable KSU_SUSFS_OPEN_REDIRECT --enable KSU_SUSFS_SUS_MAP
+          fi
           ./scripts/config --file out/.config --disable KSU_TRACEPOINT_HOOK
+          if [ "$ROOT_MODE" = "manual" ]; then
+            ./scripts/config --file out/.config --disable KSU_SUSFS
+          fi
 
           # 不要 -g<sha> 后缀，只用我们自己的 Baka-CL 版本号
           ./scripts/config --file out/.config --set-str LOCALVERSION ""
@@ -217,18 +248,25 @@ jobs:
           grep -E 'CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPROBES' out/.config || true
 
           MISSING=0
-          SYMS="CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KPROBES \
-                CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \
-                CONFIG_KSU_SUSFS_SUS_MAP CONFIG_KSU_SUSFS_OPEN_REDIRECT"
+          if [ "$ROOT_MODE" = "manual" ]; then
+            SYMS="CONFIG_KSU CONFIG_KSU_MANUAL_HOOK CONFIG_KPROBES"
+          else
+            SYMS="CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KPROBES \
+                  CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \
+                  CONFIG_KSU_SUSFS_SUS_MAP CONFIG_KSU_SUSFS_OPEN_REDIRECT"
+          fi
           for sym in $SYMS; do
             if ! grep -qx "$sym=y" out/.config; then
               echo "::error::$sym=y is missing from out/.config"
               MISSING=1
             fi
           done
-          # 5.4 必须用 inline hook，不能落回 tracepoint
           if grep -qx 'CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
             echo "::error::CONFIG_KSU_TRACEPOINT_HOOK=y on a 5.4 kernel (GKI 2.0 only)"
+            MISSING=1
+          fi
+          if [ "$ROOT_MODE" = "manual" ] && grep -qx 'CONFIG_KSU_SUSFS=y' out/.config; then
+            echo "::error::CONFIG_KSU_SUSFS=y in manual mode"
             MISSING=1
           fi
           if [ "$MISSING" -ne 0 ]; then
@@ -302,7 +340,7 @@ jobs:
           ui_print "  kernel : 5.4.302-$BAKA_VER";
           ui_print "  build  : $BUILD_STAMP UTC";
           ui_print "  clang  : $CLANG_STR";
-          ui_print "  root   : BakaSU (KernelSU based), SUSFS inline";
+          ui_print "  root   : BakaSU (KernelSU based), $ROOT_MODE";
           ui_print "  ksud   : $KSUD_STATE";
           ui_print "  source : kernel_xiaomi_odin @ resukisu";
           ui_print "  note   : boot only; vendor_boot modules untouched";
@@ -337,7 +375,7 @@ jobs:
 
             - Kernel 5.4.302-${{ env.BAKA_VER }}, ZyC clang 14.0.6
             - Kernel source: Inkypen79/kernel_xiaomi_odin @ resukisu (SUSFS + KSU hooks)
-            - Root: BakaSU ${{ inputs.bakasu_ref }} (KernelSU based, SUSFS inline hook)
+            - Root: BakaSU ${{ inputs.bakasu_ref }} (KernelSU based, ${{ inputs.root_mode }} mode)
             - BakaSU manager signature is built into the kernel; no custom signature size/hash needed
             - Package: AnyKernel3 zip (boot partition, device odin)
             - ksud embedded: ${{ env.KSUD_EMBED || 'false' }}
