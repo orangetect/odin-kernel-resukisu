@@ -50,42 +50,45 @@ jobs:
             "https://github.com/${{ inputs.kernel_repo || 'cvbyisme/android_kernel_xiaomi_sm8350_miyume' }}.git" kernel
           echo "kernel HEAD: $(git -C kernel rev-parse --short HEAD)"
 
-          echo "=== Checking odin DTS and Configs ==="
-          find kernel/arch/arm64/boot/dts -name "*odin*" || true
-          ODIN_CFG=$(find kernel/arch/arm64/configs -iname "*odin*" | head -1)
+          echo "=== Checking native odin DTS and Configs in tree ==="
+          find kernel/arch/arm64/boot/dts -iname "*odin*" || true
+          find kernel/arch/arm64/configs -iname "*odin*" || true
 
-          if [ -n "$ODIN_CFG" ]; then
-            echo "Found native odin config: $ODIN_CFG"
-            if [ "$ODIN_CFG" != "kernel/arch/arm64/configs/odin_defconfig" ]; then
-              cp "$ODIN_CFG" kernel/arch/arm64/configs/odin_defconfig
+          # 1. 优先寻找源码树内原生的 odin 完整配置或片段，绝不混入外部 LineageOS AOSP 配置（防止定时重启）
+          NATIVE_ODIN=$(find kernel/arch/arm64/configs -type f \( -iname "odin_defconfig" -o -iname "odin-qgki_defconfig" -o -iname "odin_user_defconfig" \) | head -1)
+          BASE_VENUS=$(find kernel/arch/arm64/configs -type f -iname "*venus*" | head -1)
+          ODIN_FRAG=$(find kernel/arch/arm64/configs -type f -iname "*odin*.config" | head -1)
+
+          if [ -n "$NATIVE_ODIN" ]; then
+            echo "Using native full odin defconfig: $NATIVE_ODIN"
+            cp "$NATIVE_ODIN" kernel/arch/arm64/configs/odin_defconfig
+          elif [ -n "$BASE_VENUS" ]; then
+            echo "Synthesizing clean odin_defconfig from in-tree $BASE_VENUS"
+            cp "$BASE_VENUS" kernel/arch/arm64/configs/odin_defconfig
+            if [ -n "$ODIN_FRAG" ]; then
+              echo "Merging in-tree odin fragment: $ODIN_FRAG"
+              cat "$ODIN_FRAG" >> kernel/arch/arm64/configs/odin_defconfig
             fi
           else
-            echo "Native odin config not found, synthesizing from venus base..."
-            BASE_CFG=$(find kernel/arch/arm64/configs -name "*venus*" | head -1)
-            echo "Base config found: $BASE_CFG"
-            cp "$BASE_CFG" kernel/arch/arm64/configs/odin_defconfig
-            # 剔除所有 VENUS 专属机型宏，防止 #ifdef 分支抢占导致 MIX 4 触控/充电失效
-            sed -i '/CONFIG_MACH_XIAOMI_VENUS/d' kernel/arch/arm64/configs/odin_defconfig
-            echo "# CONFIG_MACH_XIAOMI_VENUS is not set" >> kernel/arch/arm64/configs/odin_defconfig
-            echo "CONFIG_MACH_XIAOMI_ODIN=y" >> kernel/arch/arm64/configs/odin_defconfig
-            curl -fLsS https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm8350/lineage-21/arch/arm64/configs/vendor/xiaomi/odin.config \
-              >> kernel/arch/arm64/configs/odin_defconfig \
-              || curl -fLsS https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm8350/lineage-21/arch/arm64/configs/vendor/odin_QGKI.config \
-              >> kernel/arch/arm64/configs/odin_defconfig || true
+            echo "::error::Neither odin nor venus base config found in tree!"
+            exit 1
           fi
 
-          # ---- WiFi 修复：清理外部配置中将 WiFi 驱动降级为模块 (=m) 的指令 ----
+          # 2. 彻底清除 VENUS 机型宏，开启 ODIN 机型宏，并将 WiFi 驱动强制静态内置 (=y)
+          sed -i '/CONFIG_MACH_XIAOMI_VENUS/d' kernel/arch/arm64/configs/odin_defconfig
           sed -i '/CONFIG_QCA_CLD_WLAN/d' kernel/arch/arm64/configs/odin_defconfig
           sed -i '/CONFIG_CNSS2=m/d' kernel/arch/arm64/configs/odin_defconfig
           cat >> kernel/arch/arm64/configs/odin_defconfig << 'EOF'
+          # CONFIG_MACH_XIAOMI_VENUS is not set
+          CONFIG_MACH_XIAOMI_ODIN=y
           CONFIG_CFG80211=y
           CONFIG_CNSS2=y
           CONFIG_QCA_CLD_WLAN=y
           CONFIG_QCA_CLD_WLAN_PROFILE="default"
+          # CONFIG_MODULE_SIG_FORCE is not set
+          # CONFIG_MODVERSIONS is not set
           EOF
 
-      # 功耗调优：内核调度源码补丁（input boost 默认关、io-is-busy 默认关、
-      # schedutil 强制 PELT 信号路径——WALT 信号路径在本机会卡小米 logo）。
       - name: Scheduler power patches (input-boost off, io-is-busy off, schedutil PELT)
         run: |
           bash ci/scripts/sched-tune.sh "$PWD/kernel"
@@ -139,8 +142,6 @@ jobs:
             git curl wget xz-utils liblz4-dev zlib1g-dev libncurses-dev \
             linux-libc-dev || true
           sudo ldconfig || true
-          echo "=== libxml2 check ==="
-          ldconfig -p | grep libxml2 || echo "libxml2.so missing"
           if ! ldconfig -p | grep -q "libxml2.so.2"; then
             for pkg in libxml2-dev libxml2-2 libxml2-16 libxml2t64; do
               sudo apt-get install -y -qq "$pkg" 2>/dev/null && echo "ok $pkg" || true
@@ -149,7 +150,6 @@ jobs:
           fi
           if ! ldconfig -p | grep -q "libxml2.so.2"; then
             LIB=$(find /usr/lib /lib -name "libxml2.so*" 2>/dev/null | head -1)
-            echo "fallback lib: $LIB"
             if [ -n "$LIB" ]; then
               T=$(readlink -f "$LIB")
               sudo ln -sf "$T" /usr/lib/x86_64-linux-gnu/libxml2.so.2 || true
@@ -159,7 +159,6 @@ jobs:
               exit 1
             fi
           fi
-          ldconfig -p | grep libxml2 || true
 
       - name: Download Clang (ZyCromerZ mirror)
         run: |
@@ -187,7 +186,7 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: odin-wifi-${{ inputs.disable_preinit }}-${{ inputs.disable_susfs }}
+          key: odin-clean-v2-${{ inputs.disable_preinit }}-${{ inputs.disable_susfs }}
           max-size: 2G
 
       - name: Fast compile gate (KSU objects only)
@@ -228,7 +227,6 @@ jobs:
               --enable KSU_SUSFS_OPEN_REDIRECT --enable KSU_SUSFS_SUS_MAP \
               --enable KSU_DYNAMIC_MANAGER
           fi
-          # ---- 功耗调优：默认 governor = schedutil ----
           bash ../ci/scripts/power-tune.sh "$PWD"
           make -j$(nproc) O=out olddefconfig
           bash ../ci/scripts/power-tune.sh "$PWD" verify
@@ -335,12 +333,11 @@ jobs:
           fi
           echo "KSU/SUSFS config gate: PASS"
 
-          # 同时构建 Image、dtbs 与 modules（若源码树将部分驱动锁死为 =m，一并产出 .ko）
           make -j$(nproc) O=out LOCALVERSION="-$NEKO_VER" \
             KSU_SECOND_SIGNATURE_RELEASE=1 \
             KSU_EXPECTED_SIZE2=716 \
             KSU_EXPECTED_HASH2=2d89b50aaf1db013c2b6738f973f48b62ea21a3a8d7216bfec3521065d448458 \
-            Image Image.gz dtbs modules
+            Image Image.gz dtbs
 
       - name: Collect artifacts
         run: |
@@ -348,8 +345,6 @@ jobs:
           cp kernel/out/arch/arm64/boot/Image artifact/Image
           cp kernel/out/arch/arm64/boot/Image.gz artifact/Image.gz || true
           cp kernel/out/.config artifact/kernel.config
-          find kernel/out/arch/arm64/boot/dts -name "*.dtb" -exec cat {} + > artifact/dtb 2>/dev/null || true
-          find kernel/out -name "*.ko" -exec cp {} artifact/ \; 2>/dev/null || true
           (cd artifact && sha256sum Image > Image.sha256)
           strings artifact/Image | grep -m3 'Linux version' || true
 
@@ -367,15 +362,9 @@ jobs:
           cd ak3
           rm -rf .git .github patch README.md
           mkdir -p patch
+          # 仅打包纯内核 Image，保留手机原厂 boot.img 中的 odin 设备树，避免跨机型 DTB 引发定时重启
           cp ../kernel/out/arch/arm64/boot/Image .
 
-          # ---- 打包 DTB：确保 CNSS2 / WiFi 设备树节点与新编译内核匹配 ----
-          if [ -s ../artifact/dtb ]; then
-            cp ../artifact/dtb ./dtb
-            echo "DTB packaged: $(stat -c %s ./dtb) bytes"
-          fi
-
-          # ---- 可选：内置 ksud ----
           EMBED_KSUD="${{ inputs.embed_ksud }}"
           EMBED_KSUD="${EMBED_KSUD:-true}"
           echo "EMBED_KSUD=$EMBED_KSUD"
@@ -412,7 +401,7 @@ jobs:
           ui_print "  root   : FinaSU / KernelSU, signature slot2";
           ui_print "  susfs  : $SUSFS_STATE";
           ui_print "  ksud   : $KSUD_STATE";
-          ui_print "  wifi   : QCA_CLD_WLAN built-in + DTB";
+          ui_print "  wifi   : QCA_CLD_WLAN built-in (clean in-tree config)";
           ui_print "  author : cvbyisme & LuNanzhi (odin port)";
           ui_print " ";
           AK3EOF
@@ -442,15 +431,11 @@ jobs:
             odin (Xiaomi MIX 4) FinaSU built-in - TEST BUILD
 
             - Kernel 5.4.302-${{ env.NEKO_VER }}, ZyC clang 14.0.6
-            - WiFi fix: QCA_CLD_WLAN=y + CNSS2=y + DTB packaged + MODVERSIONS disabled
+            - Clean in-tree odin config (removed external LineageOS config to fix random reboot)
+            - WiFi fix: QCA_CLD_WLAN=y + CNSS2=y built-in + MODVERSIONS disabled
             - KSU_SECOND_SIGNATURE_RELEASE=1 (slot2 = FinaSU release key, size 716)
-            - preflight v2: 5.4 shim headers + global -include + devpts/umount retarget
-            - Package: AnyKernel3 zip
+            - Package: AnyKernel3 zip (Image only, preserves stock odin DTB)
             - ksud embedded: ${{ env.KSUD_EMBED || 'false' }}
-
-            Install: flash in TWRP or a kernel flasher app.
-            Manager: FinaSU v1.5.0 manager matching the slot2 signature.
-            Rollback: keep a stock boot.img backup.
           files: ${{ github.workspace }}/${{ env.AK3_NAME }}.zip
           prerelease: true
           draft: false
