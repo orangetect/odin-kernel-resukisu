@@ -76,10 +76,6 @@ jobs:
       # BakaSU 4.2 使用 susfs_*_no_su / zygote_next 新 helper，odin 树自带
       # SUSFS v2.1.0 只有 umounted 名字；不补别名会在 vmlinux 链接时报
       # undefined symbol；脚本在 fs/susfs.c 里补真实函数。
-      - name: BakaSU manual hook call sites (manual mode only)
-        if: ${{ inputs.root_mode == 'manual' }}
-        run: |
-          bash ci/scripts/ksu-manual-hooks.sh "$PWD/kernel"
 
       - name: BakaSU <-> SUSFS v2.1.0 helper compat functions (inline mode only)
         if: ${{ inputs.root_mode != 'manual' }}
