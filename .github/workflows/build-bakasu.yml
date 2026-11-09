@@ -7,6 +7,10 @@ on:
         description: 'BakaSU git ref (tag/branch/commit)'
         required: false
         default: 'v4.2.0-rc3'
+      localversion:
+        description: '可选：覆盖内核 LOCALVERSION 后缀（如 -inkypen-resuki-v2，用于匹配 ROM 模块 vermagic）；留空用 Baka-CL-日期-随机'
+        required: false
+        default: ''
       kernel_repo:
         description: 'kernel source repo (owner/name)'
         required: false
@@ -177,7 +181,12 @@ jobs:
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
           clang --version
 
-          BAKA_VER="Baka-CL-$(date +%Y%m%d)-$(od -An -N2 -tu2 /dev/urandom | tr -d ' ')"
+          LV_OVERRIDE="${{ inputs.localversion }}"
+          if [ -n "$LV_OVERRIDE" ]; then
+            BAKA_VER="${LV_OVERRIDE#-}"
+          else
+            BAKA_VER="Baka-CL-$(date +%Y%m%d)-$(od -An -N2 -tu2 /dev/urandom | tr -d ' ')"
+          fi
           echo "BAKA_VER=$BAKA_VER" >> $GITHUB_ENV
           echo "kernel localversion: -$BAKA_VER"
 

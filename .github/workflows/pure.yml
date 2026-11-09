@@ -112,6 +112,7 @@ jobs:
           grep -E 'CONFIG_KSU' out/.config || echo 'KSU not set - OK'
           echo '=== kernel version ==='
           grep -E '^(VERSION|PATCHLEVEL|SUBLEVEL|EXTRAVERSION)' Makefile | head -4
+          make -j$(nproc) O=out init/version.o
           make -j$(nproc) O=out Image
 
       - name: Collect artifacts
