@@ -149,14 +149,16 @@ jobs:
           bash ../ci/scripts/power-tune.sh "$PWD" verify
           bash ../ci/scripts/sched-tune.sh "$PWD" verify
 
-          # flask.h 是 security/selinux 目录构建时才生成的，但 kernelsu 的
-          # objsec.h 会 include 它；先单独生成，避免竞态。
-          make -j$(nproc) O=out security/selinux/flask.h \
-            || make -j$(nproc) O=out security/selinux/
+          # BakaSU 的 core/init.c 会 include <generated/compile.h>；这个头
+          # 由 init/version.o 生成（不是 make prepare），必须在编 KSU 前生成。
+          make -j$(nproc) O=out init/version.o
+
+          # flask.h 由 security/selinux 目录构建生成，kernelsu 的 objsec.h
+          # 会 include 它；先建整个目录，避免单文件目标不存在。
+          make -j$(nproc) O=out security/selinux/
 
           echo "=== gate: building KSU objects ==="
-          make -j$(nproc) O=out drivers/kernelsu/kernelsu.o \
-            || make -j$(nproc) O=out drivers/kernelsu/
+          make -j$(nproc) O=out drivers/kernelsu/
           echo "=== gate: PASS ==="
 
       - name: Build kernel
@@ -191,9 +193,9 @@ jobs:
           make -j$(nproc) O=out olddefconfig
           bash ../ci/scripts/power-tune.sh "$PWD" verify
 
-          # 与门禁同理：先确保 flask.h 已生成，避免与 selinux 目录构建竞态
-          make -j$(nproc) O=out security/selinux/flask.h \
-            || make -j$(nproc) O=out security/selinux/
+          # 与门禁同理：先确保 compile.h 与 flask.h 已生成，避免竞态
+          make -j$(nproc) O=out init/version.o
+          make -j$(nproc) O=out security/selinux/
 
           echo "=== BakaSU / SUSFS config check ==="
           grep -E 'CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPROBES' out/.config || true
