@@ -78,7 +78,7 @@ jobs:
       # schedutil 强制 PELT 信号路径——WALT 信号路径在本机会卡小米 logo）。
       - name: Scheduler power patches (input-boost off, io-is-busy off, schedutil PELT)
         run: |
-          bash ci/scripts/sched-tune.sh "$PWD/kernel"|| true
+          bash ci/scripts/sched-tune.sh "$PWD/kernel"
 
       - name: Clone FinaSU into KernelSU/
         run: |
@@ -100,6 +100,7 @@ jobs:
       # v2.1.0，但 wire 协议（CMD 编号 + st_susfs 结构）与 v2.3.0 完全兼容，
       # 故让内核如实汇报 v2.3.0，并顺手修 ctime 伪装标志的笔误。
       - name: Point kernel SUSFS at v2.3.0 wire protocol (FinaSU manager)
+        if: ${{ inputs.disable_susfs != 'true' }}
         run: |
           chmod +x ci/scripts/susfs-version.sh
           bash ci/scripts/susfs-version.sh "$PWD/kernel"
@@ -107,6 +108,7 @@ jobs:
       # 让 spoof_uname 同时覆盖 /proc/version 与 /proc/sys/kernel/{osrelease,version}，
       # 使系统「内核版本」显示与软件读取也显示伪装值（默认只 hook uname() 系统调用）。
       - name: SUSFS uname spoof for /proc/version and osrelease
+        if: ${{ inputs.disable_susfs != 'true' }}
         run: |
           chmod +x ci/scripts/susfs-uname-proc.sh
           bash ci/scripts/susfs-uname-proc.sh "$PWD/kernel"
