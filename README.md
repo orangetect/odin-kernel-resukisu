@@ -6,7 +6,7 @@
 > 内核源使用 [Inkypen79/kernel_xiaomi_odin](https://github.com/Inkypen79/kernel_xiaomi_odin) 的 `resukisu` 分支，
 > 机型配置参考 [Inkypen79/device_xiaomi_odin](https://github.com/Inkypen79/device_xiaomi_odin)。
 >
-> ⚠️ **本移植尚未在 MIX 4 实机上验证**。只做了静态/离线验证（见文末），刷机风险自负。
+> ⚠️ **本移植在 MIX 4 实机上验证**。使用susfs会无限重启，所以不要使用，内核管理器是Resukisu最后一版本。
 
 ---
 
