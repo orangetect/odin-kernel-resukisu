@@ -43,12 +43,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: ci
-
       - name: Checkout kernel sources
         run: |
           git clone --depth 1 --branch "${{ inputs.kernel_ref || 'main' }}" \
             "https://github.com/${{ inputs.kernel_repo || 'cvbyisme/android_kernel_xiaomi_sm8350_miyume' }}.git" kernel
           echo "kernel HEAD: $(git -C kernel rev-parse --short HEAD)"
+
+          # 检查是否包含 odin 设备树，并以 venus_defconfig 为基底合成完整的 odin_defconfig
+          find kernel/arch/arm64/boot/dts -name "*odin*" || true
+          BASE_CFG=$(find kernel/arch/arm64/configs -name "*venus*" | head -1)
+          echo "Base config found: $BASE_CFG"
+          cp "$BASE_CFG" kernel/arch/arm64/configs/odin_defconfig
+          curl -sSL https://raw.githubusercontent.com/LineageOS/android_kernel_xiaomi_sm8350/lineage-21/arch/arm64/configs/vendor/odin_QGKI.config \
+            >> kernel/arch/arm64/configs/odin_defconfig || true
 
       # 功耗调优：内核调度源码补丁（input boost 默认关、io-is-busy 默认关、
       # schedutil 强制 PELT 信号路径——WALT 信号路径在本机会卡小米 logo）。
@@ -172,7 +179,7 @@ jobs:
           export CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
 
-          make -j$(nproc) O=out venus_defconfig
+          make -j$(nproc) O=out odin_defconfig
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then
             ./scripts/config --file out/.config \
               --enable KPROBES --enable KSU --enable KSU_DYNAMIC_MANAGER \
@@ -222,7 +229,7 @@ jobs:
           echo "NEKO_VER=$NEKO_VER" >> $GITHUB_ENV
           echo "kernel localversion: -$NEKO_VER"
 
-          make -j$(nproc) O=out venus_defconfig
+          make -j$(nproc) O=out odin_defconfig
 
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then
             ./scripts/config --file out/.config \
@@ -412,4 +419,3 @@ jobs:
           draft: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
