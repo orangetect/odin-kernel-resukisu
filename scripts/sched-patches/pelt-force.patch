@@ -1,17 +1,16 @@
 diff --git a/kernel/sched/cpufreq_schedutil.c b/kernel/sched/cpufreq_schedutil.c
-index 826d640e6..e00e6cb01 100644
 --- a/kernel/sched/cpufreq_schedutil.c
 +++ b/kernel/sched/cpufreq_schedutil.c
-@@ -177,10 +177,19 @@ static bool sugov_up_down_rate_limit(struct sugov_policy *sg_policy, u64 time,
+@@ -156,10 +156,19 @@ static bool sugov_up_down_rate_limit(struct sugov_policy *sg_policy, u64 time,
  	return false;
  }
  
 +/*
-+ * Venus power tuning: force the PELT util path even on WALT builds.
++ * Odin / MIX 4 power tuning: force the PELT util path even on WALT builds.
 + * The WALT util signal path hangs the device at the Xiaomi logo when
-+ * schedutil is the built-in default governor (verified on venus).
-+ * The WALT scheduler itself stays enabled for placement/boost; only
-+ * schedutil's util source is switched to PELT.
++ * schedutil is the built-in default governor.  The WALT scheduler itself
++ * stays enabled for placement/boost;
++ * only schedutil's util source is switched to PELT.
 + */
 +static int sugov_force_pelt = 1;
 +
@@ -23,16 +22,7 @@ index 826d640e6..e00e6cb01 100644
  #else
  	return true;
  #endif
-@@ -485,6 +494,8 @@ static unsigned int get_next_freq(struct sugov_policy *sg_policy,
- 	trace_android_vh_map_util_freq(util, freq, max, &next_freq);
- 	if (next_freq)
- 		raw_freq = next_freq;
-+	else if (use_pelt())
-+		raw_freq = map_util_freq(util, freq, max);
- 	else
- 		raw_freq = walt_map_util_freq(util, sg_policy, max, sg_cpu->cpu);
- 
-@@ -622,14 +633,15 @@ static unsigned long sugov_get_util(struct sugov_cpu *sg_cpu)
+@@ -440,14 +449,15 @@ static unsigned long sugov_get_util(struct sugov_cpu *sg_cpu)
  	sg_cpu->bw_dl = cpu_bw_dl(rq);
  
  #ifdef CONFIG_SCHED_WALT

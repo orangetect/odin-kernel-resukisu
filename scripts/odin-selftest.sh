@@ -1,16 +1,16 @@
 #!/system/bin/sh
 # =====================================================================
-# venus-selftest.sh  —  小米11 (venus/SM8350) Neko-CL 内核刷入自检
+# odin-selftest.sh  —  小米 MIX 4 (odin/SM8350) Baka-CL 内核刷入自检
 # 用法（推荐 root）：
-#   su -c 'sh /sdcard/Download/venus-selftest.sh'
+#   su -c 'sh /sdcard/Download/odin-selftest.sh'
 # 普通权限也能跑，但 dmesg / pstore / 模块项会 SKIP。
 # 建议在刚刷完机第一次开机后立刻跑，dmesg 里开机日志才不会被覆盖。
 # =====================================================================
 TS=$(date +%Y%m%d-%H%M%S)
-OUT="/sdcard/Download/venus-selftest-$TS.txt"
+OUT="/sdcard/Download/odin-selftest-$TS.txt"
 PASS=0; FAIL=0; WARN=0; SKIP=0
 R=0; [ "$(id -u 2>/dev/null)" = "0" ] && R=1
-DML=/data/local/tmp/venus-dmesg.log
+DML=/data/local/tmp/odin-dmesg.log
 [ "$R" = "1" ] && dmesg > "$DML" 2>/dev/null
 
 log()  { echo "$@" >> "$OUT"; }
@@ -22,7 +22,7 @@ skp()  { SKIP=$((SKIP+1)); say "  [SKIP] $1"; }
 sec()  { say ""; say "== $1 =="; }
 
 : > "$OUT" 2>/dev/null
-say "venus-selftest  $TS   device=$(getprop ro.product.device)  rom=$(getprop ro.build.display.id)"
+say "odin-selftest  $TS   device=$(getprop ro.product.device)  rom=$(getprop ro.build.display.id)"
 [ "$R" = "1" ] || say "!! 非 root 运行，部分项目会跳过"
 
 # ---------- 1. 内核身份 ----------
@@ -33,17 +33,17 @@ KREL=$(echo "$PV" | sed -n 's/^Linux version \([^ ]*\).*/\1/p')
 say "  /proc/version : $PV"
 say "  uname -r      : $UR   (kernel uts spoof 可能改写，不可信)"
 case "$KREL" in
-  *Neko-CL*) ok "真内核标识含 Neko-CL ($KREL)" ;;
+  *Baka-CL*) ok "真内核标识含 Baka-CL ($KREL)" ;;
   "")        bad "读不到 /proc/version" ;;
-  *)         bad "内核不是 Neko-CL：$KREL" ;;
+  *)         bad "内核不是 Baka-CL：$KREL" ;;
 esac
 case "$PV" in
   *"5.4.302"*) ok "源版本 5.4.302" ;;
   *"5.4."*)    wrn "源版本不是 5.4.302" ;;
 esac
 
-# ---------- 2. KernelSU / FinaSU ----------
-sec "2. KernelSU / FinaSU"
+# ---------- 2. KernelSU / BakaSU ----------
+sec "2. KernelSU / BakaSU"
 KS=/data/adb/ksu/bin/ksud
 if [ -x "$KS" ]; then
   KV=$($KS -V 2>/dev/null | head -1)
@@ -71,8 +71,8 @@ if [ "$R" = "1" ]; then
   DOM=$(cat /proc/self/attr/current 2>/dev/null | tr -d '\0')
   say "  当前域     : $DOM"
   case "$DOM" in u:r:ksu:s0*) ok "root 域为 ksu" ;; *) wrn "root 域异常：$DOM" ;; esac
-  CNT=$(grep -c "ksu54" "$DML" 2>/dev/null)
-  say "  dmesg ksu54 命中: $CNT"
+  CNT=$(grep -c "ksu" "$DML" 2>/dev/null)
+  say "  dmesg ksu 命中: $CNT"
   if [ "$CNT" -gt 0 ]; then
     ok "access 规则层掩码有日志（本次开机已生效）"
   else
@@ -80,11 +80,11 @@ if [ "$R" = "1" ]; then
     if [ -n "$DMT0" ] && [ "$DMT0" -gt 600 ] 2>/dev/null; then
       say "  （dmesg 最早一条已是开机 ${DMT0}s，开机日志被覆盖，本次无法判断，建议刚重启后立刻再跑）"
     else
-      wrn "无 ksu54 日志（开机不久仍无，掩码可能未加载）"
+      wrn "无 ksu 日志（开机不久仍无，掩码可能未加载）"
     fi
   fi
 else
-  skp "SELinux 域 / ksu54 日志（需要 root）"
+  skp "SELinux 域 / ksu 日志（需要 root）"
 fi
 
 # ---------- 4. 调度与功耗 ----------
@@ -160,7 +160,7 @@ if [ "$R" = "1" ] && [ -x "$KS" ]; then
   MN=$($KS module list 2>/dev/null | grep -c '"id"')
   say "  已安装模块数: $MN"
   [ "$MN" -gt 0 ] && ok "模块系统正常" || wrn "没有已安装模块"
-  for m in venus_spoof_security_patch tricky_store zygisksu; do
+  for m in odin_spoof_security_patch tricky_store zygisksu; do
     if [ -d "/data/adb/modules/$m" ]; then say "  [OK] /data/adb/modules/$m 存在"; fi
     if [ -d "/data/adb/modules_update/$m" ]; then wrn "/data/adb/modules_update/$m 待重启合并"; fi
   done
@@ -210,7 +210,7 @@ fi
 
 # ---------- 10. 备份 ----------
 sec "10. boot 备份"
-for f in /sdcard/cvby/boot_a.img /sdcard/cvby/vendor_boot_a.img /sdcard/cvby/dtbo_a.img; do
+for f in /sdcard/odin/boot_a.img /sdcard/odin/vendor_boot_a.img /sdcard/odin/dtbo_a.img; do
   if [ -f "$f" ]; then
     sz=$(ls -l "$f" 2>/dev/null | awk '{print $5}')
     say "  $f  ($sz B)"

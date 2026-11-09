@@ -3,13 +3,13 @@
 #
 # 用法: bash scripts/sched-tune.sh <kernel_dir> [verify]
 #
-# 固定应用三个补丁(实机验证通过的正式形态,小米 11 / venus):
+# 固定应用三个补丁(按 venus 已验证形态移植到 MIX 4 / odin,本机尚未实测):
 #   s1-input-boost-off : cpu-boost 输入提升默认关(触摸不再拉高 min 频)
 #   s2-io-is-busy-off  : WALT io_is_busy 默认 0(IO 等待不再推高频)
 #   pelt-force         : schedutil 强制 PELT util 路径
-#                        (WALT 信号路径在 venus 上会卡小米 logo)
+#                        (WALT 信号路径在 odin 默认 schedutil 时有卡 logo 风险)
 #
-# 补丁针对 cvbyisme/android_kernel_xiaomi_sm8350_miyume@main 生成;
+# 补丁针对 Inkypen79/kernel_xiaomi_odin@resukisu 生成;
 # 内核树漂移时 apply 显式失败,不静默跳过。
 
 set -u

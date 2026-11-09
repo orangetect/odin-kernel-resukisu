@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'Source run id (must have venus-pure-kernel artifact)'
+        description: 'Source run id (must have odin-pure-kernel artifact, required)'
         required: true
-        default: '41068031425'
+        default: ''
 
 jobs:
   package:
@@ -17,7 +17,7 @@ jobs:
       - name: Download kernel artifact
         uses: actions/download-artifact@v4
         with:
-          name: venus-pure-kernel
+          name: odin-pure-kernel
           path: artifact
           run-id: ${{ inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -36,8 +36,8 @@ jobs:
           test -n "$IMG"
           cp "$IMG" ./Image
           ls -lh Image
-          sed -i 's/^kernel.string=.*/kernel.string=venus-PURE by cvby/' anykernel.sh
-          sed -i 's/^device.name1=.*/device.name1=venus/' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=odin-PURE by cvby/' anykernel.sh
+          sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
           sed -i 's/^device.name2=.*/device.name2=/' anykernel.sh
           sed -i 's/^device.name3=.*/device.name3=/' anykernel.sh
           sed -i 's/^device.name4=.*/device.name4=/' anykernel.sh
@@ -49,7 +49,7 @@ jobs:
           bash -n anykernel.sh
           echo 'bash syntax OK'
           chmod +x anykernel.sh
-          NAME="venus-PURE-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
+          NAME="odin-PURE-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
           zip -r9 "../${NAME}.zip" . -x '*.git*' > /dev/null
           cd ..
           ls -lh *.zip
@@ -58,16 +58,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: pure-ak3-${{ github.run_number }}
-          name: venus PURE AnyKernel3 (no SUSFS)
+          name: odin PURE AnyKernel3 (no KSU/SUSFS)
           body: |
-            venus (Xiaomi 11) PURE kernel - NO SUSFS backport
+            odin (Xiaomi MIX 4) PURE kernel - NO KernelSU, NO SUSFS
 
             KSU dir present for Kconfig, CONFIG_KSU disabled.
-            Purpose: triage - determine if crash comes from SUSFS or baseline version.
+            Purpose: triage - determine if a crash comes from KSU/SUSFS or from the baseline kernel.
             NOT VERIFIED ON DEVICE.
 
             - Base: 5.4.302 (Makefile VERSION/PATCHLEVEL/SUBLEVEL verified)
-            - ROM kernel: 5.4.274-qgki-gcc3ec22f5061 (28 patchlevels difference)
             - Toolchain: ZyC clang 14.0.6
             - Source artifact from run ${{ inputs.run_id }}
 

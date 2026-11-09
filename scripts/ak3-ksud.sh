@@ -1,4 +1,4 @@
-# AnyKernel3 附加脚本：刷完内核预置 ksud（准备废弃）
+# AnyKernel3 附加脚本：刷完内核预置 BakaSU 的 ksud
 # 作者：cvbyisme   共创：LuNanzhi
 # 目录结构参考 LuNanzhi 的成功设备：
 #   /data/adb/ksud          实体文件
@@ -10,9 +10,9 @@ ksud_install() {
   KS="$AKHOME/ksud";
   if [ ! -f "$KS" ]; then
     # ---- 包内不带 ksud：清掉设备上的旧版本，避免管理器(新版)与旧 ksud 版本
-    # 不匹配后后台反复重试（实测：旧 v1.4.2 ksud + v1.5.0 管理器 → 空载 2.65W，
-    # 删掉/换成匹配版本后 1.32W）。删掉后由管理器首次启动时释放匹配版本，
-    # 内核侧 ksu-su-fallback 保证首次启动仍有 root shell。
+    # 不匹配后后台反复重试（旧 ksud + 新管理器会持续握手重试，空载功耗升高，
+    # 换成匹配版本后恢复正常）。删掉后由管理器首次启动时释放匹配版本。
+
     ui_print " ";
     ui_print "- No ksud in package: remove stale one on device";
     REMOVED=0;
@@ -55,7 +55,7 @@ ksud_install() {
     fi
     if [ -s /data/adb/ksud ]; then
       ui_print "  - /data/adb/ksud installed";
-      ui_print "  - reboot, then Welcome to FinaSU! (root ready)";
+      ui_print "  - reboot, then Welcome to BakaSU! (root ready)";
     else
       OK=0;
       ui_print "! /data/adb/ksud verify failed";

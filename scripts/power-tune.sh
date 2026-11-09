@@ -3,9 +3,9 @@
 #
 # 用法: bash scripts/power-tune.sh <kernel_dir> [verify]
 #
-# 只改 out/.config(内核配置层),不改源码。venus_defconfig 未设置默认
-# governor,Kconfig 会兜底成 performance(8 核满频,功耗高),这里在
-# 构建时显式改为 schedutil。
+# 只改 out/.config(内核配置层),不改源码。odin_defconfig 显式把默认
+# governor 设成 performance(8 核满频,功耗高),这里在构建时显式改为
+# schedutil;WALT util 路径的卡 logo 问题由 sched-patches/pelt-force 处理。
 
 set -u
 
@@ -15,7 +15,7 @@ CONFIG_BIN="$KERNEL_DIR/scripts/config"
 CFG="$KERNEL_DIR/out/.config"
 
 [ -x "$CONFIG_BIN" ] || { echo "::error::scripts/config not found under $KERNEL_DIR"; exit 1; }
-[ -f "$CFG" ] || { echo "::error::$CFG missing (run make venus_defconfig first)"; exit 1; }
+[ -f "$CFG" ] || { echo "::error::$CFG missing (run make odin_defconfig first)"; exit 1; }
 
 if [ "$MODE" = "verify" ]; then
     grep -qx 'CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y' "$CFG" \

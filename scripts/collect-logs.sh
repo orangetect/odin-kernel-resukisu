@@ -1,15 +1,15 @@
 #!/system/bin/sh
 # ============================================================
-# venus-kernel-finaisu 日志采集脚本
+# odin-kernel-finaisu 日志采集脚本
 # 用法（需要 root）：
 #     su -c 'sh /data/local/tmp/collect-logs.sh'
-# 产物：/sdcard/Download/venus-logs-<时间戳>.zip
+# 产物：/sdcard/Download/odin-logs-<时间戳>.zip
 # 可把 zip 直接发给作者排错，里面不含任何账号/隐私数据
 # ============================================================
 set -u
 
 TS=$(date +%Y%m%d-%H%M%S)
-NAME=venus-logs-$TS
+NAME=odin-logs-$TS
 OUT=/sdcard/Download/$NAME
 LOG=$OUT/log.txt
 
@@ -35,7 +35,7 @@ run "cat /proc/loadavg"
 sec 内核启动参数
 run "cat /proc/cmdline"
 
-sec FinaSU / KernelSU
+sec BakaSU / KernelSU
 run "ls -l /data/adb/ksud /data/adb/ksu/bin/ksud"
 run "/data/adb/ksu/bin/ksud --version"
 run "/data/adb/ksu/bin/ksud feature list"
@@ -47,7 +47,7 @@ run "cat /sys/fs/selinux/status"
 run "cat /sys/fs/selinux/enforce"
 run "cat /sys/fs/selinux/policyvers"
 run "getenforce"
-run "dmesg | grep -i ksu54"
+run "dmesg | grep -i ksu"
 
 sec SUSFS
 run "dmesg | grep -i susfs | tail -60"

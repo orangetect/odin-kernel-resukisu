@@ -1,16 +1,20 @@
-name: Build venus PURE kernel
+name: Build odin PURE kernel
 
 on:
   workflow_dispatch:
     inputs:
+      bakasu_ref:
+        description: 'BakaSU git ref'
+        required: false
+        default: 'v4.2.0-rc3'
       kernel_repo:
         description: 'kernel source repo (owner/name)'
         required: false
-        default: 'cvbyisme/android_kernel_xiaomi_sm8350_miyume'
+        default: 'Inkypen79/kernel_xiaomi_odin'
       kernel_ref:
-        description: 'kernel source ref'
+        description: 'kernel source ref (resukisu required: ships SUSFS + KSU hooks)'
         required: false
-        default: 'main'
+        default: 'resukisu'
 
 jobs:
   build:
@@ -24,15 +28,15 @@ jobs:
 
       - name: Checkout kernel sources
         run: |
-          git clone --depth 1 --branch "${{ inputs.kernel_ref || 'main' }}" \
-            "https://github.com/${{ inputs.kernel_repo || 'cvbyisme/android_kernel_xiaomi_sm8350_miyume' }}.git" kernel
+          git clone --depth 1 --branch "${{ inputs.kernel_ref || 'resukisu' }}" \
+            "https://github.com/${{ inputs.kernel_repo || 'Inkypen79/kernel_xiaomi_odin' }}.git" kernel
           echo "kernel HEAD: $(git -C kernel rev-parse --short HEAD)"
 
-      - name: Clone FinaSU into KernelSU/ (Kconfig needs dir, KSU itself disabled)
+      - name: Clone BakaSU into KernelSU/ (Kconfig needs dir, KSU itself disabled)
         run: |
           rm -rf kernel/KernelSU
-          git clone --depth 1 --branch master https://github.com/LyraVoid/FinaSU.git kernel/KernelSU
-          echo "FinaSU HEAD: $(git -C kernel/KernelSU rev-parse --short HEAD)"
+          git clone --branch "${{ inputs.bakasu_ref || 'v4.2.0-rc3' }}" https://github.com/Baka-SU/BakaSU.git kernel/KernelSU
+          echo "BakaSU HEAD: $(git -C kernel/KernelSU rev-parse --short HEAD)"
 
       - name: Free disk space
         run: |
@@ -96,8 +100,8 @@ jobs:
           export CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
           clang --version
-          make -j$(nproc) O=out venus_defconfig
-          ./scripts/config --file out/.config --disable KSU --disable KSU_SUSFS || true
+          make -j$(nproc) O=out odin_defconfig
+          ./scripts/config --file out/.config --disable KSU --disable KSU_SUSFS --disable KSU_TRACEPOINT_HOOK || true
           # ---- 功耗调优：input boost 关、io-is-busy 关、schedutil 走 PELT ----
           bash ../ci/scripts/sched-tune.sh "$PWD"
           bash ../ci/scripts/power-tune.sh "$PWD"
@@ -121,7 +125,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: venus-pure-kernel
+          name: odin-pure-kernel
           path: artifact/*
           if-no-files-found: error
 
@@ -133,8 +137,8 @@ jobs:
           rm -rf .git .github patch README.md
           mkdir -p patch
           cp ../kernel/out/arch/arm64/boot/Image .
-          sed -i 's/^kernel.string=.*/kernel.string=venus-PURE by cvby/' anykernel.sh
-          sed -i 's/^device.name1=.*/device.name1=venus/' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=odin-PURE by cvby/' anykernel.sh
+          sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
           sed -i 's/^device.name2=.*/device.name2=/' anykernel.sh
           sed -i 's/^device.name3=.*/device.name3=/' anykernel.sh
           sed -i 's/^device.name4=.*/device.name4=/' anykernel.sh
@@ -144,7 +148,7 @@ jobs:
           sed -i '/^backup_file /d;/^replace_string /d;/^insert_line /d;/^append_file /d;/^patch_fstab /d' anykernel.sh
           bash -n anykernel.sh
           chmod +x anykernel.sh
-          NAME="venus-PURE-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
+          NAME="odin-PURE-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
           zip -r9 "../${NAME}.zip" . -x "*.git*" > /dev/null
           cd ..
           ls -lh *.zip
@@ -154,14 +158,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: pure-${{ github.run_number }}
-          name: venus PURE kernel (no KSU)
+          name: odin PURE kernel (no KSU/SUSFS)
           body: |
-            venus (Xiaomi 11) PURE kernel - NO KernelSU, NO SUSFS
+            odin (Xiaomi MIX 4) PURE kernel - NO BakaSU, NO SUSFS
 
             Purpose: verify toolchain / baseline / module vermagic match.
             NOT VERIFIED ON DEVICE.
 
-            - Base: 5.4.302-HoshinoNeko, ZyC clang 14.0.6
+            - Base: 5.4.302, ZyC clang 14.0.6
             - Package: AnyKernel3 zip
           files: ${{ github.workspace }}/${{ env.AK3_NAME }}.zip
           prerelease: true

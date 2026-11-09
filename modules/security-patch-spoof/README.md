@@ -22,11 +22,11 @@
 
 ```sh
 # 在本目录内打包（module.prop 必须在 zip 根目录）
-zip -r ../venus_spoof_security_patch.zip module.prop post-fs-data.sh service.sh README.md
-su -c '/data/adb/ksu/bin/ksud module install /sdcard/Download/venus_spoof_security_patch.zip'
+zip -r ../odin_spoof_security_patch.zip module.prop post-fs-data.sh service.sh README.md
+su -c '/data/adb/ksu/bin/ksud module install /sdcard/Download/odin_spoof_security_patch.zip'
 ```
 
-新装模块先落在 `/data/adb/modules_update/venus_spoof_security_patch/`，重启后合并生效。
+新装模块先落在 `/data/adb/modules_update/odin_spoof_security_patch/`，重启后合并生效。
 
 ## 验证
 

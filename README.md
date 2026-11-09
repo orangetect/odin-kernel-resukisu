@@ -1,11 +1,12 @@
-# venus-kernel-finaisu
+# odin-kernel-bakasu
 
-> 小米 11（venus / SM8350）5.4 非 GKI 内核，内置 [FinaSU](https://github.com/LyraVoid/FinaSU)。
+> 小米 MIX 4（odin / SM8350-AC）5.4 非 GKI 内核，内置 [BakaSU](https://github.com/Baka-SU/BakaSU)。
 >
+> 本仓库由 [cvbyisme/venus-kernel-finaisu](https://github.com/cvbyisme/venus-kernel-finaisu)（小米 11 / venus，FinaSU 方案）移植而来，
+> 内核源使用 [Inkypen79/kernel_xiaomi_odin](https://github.com/Inkypen79/kernel_xiaomi_odin) 的 `resukisu` 分支，
+> 机型配置参考 [Inkypen79/device_xiaomi_odin](https://github.com/Inkypen79/device_xiaomi_odin)。
 >
-> 一切改动都来自公开上游，大肥鱼参与了搭建、排错与文档撰写。
->
-> ⚠️只在自己机器上验证过，刷机风险自负。
+> ⚠️ **本移植尚未在 MIX 4 实机上验证**。只做了静态/离线验证（见文末），刷机风险自负。
 
 ---
 
@@ -13,352 +14,205 @@
 
 | 项 | 值 |
 |---|---|
-| 机型 | Xiaomi 11（venus / M2011K2C） |
-| SoC | Snapdragon 888 / SM8350 |
-| 内核基线 | Linux 5.4.302（`cvbyisme/android_kernel_xiaomi_sm8350_miyume`） |
-| 原厂内核 | `5.4.274-qgki-gcc3ec22f5061` |
-| Android | 16 / HyperOS 3.0（WPBCNXM） |
+| 机型 | Xiaomi MIX 4（odin / 2106118C） |
+| SoC | Snapdragon 888+ / SM8350-AC（lahaina 平台） |
+| 内核基线 | Linux 5.4.302（`Inkypen79/kernel_xiaomi_odin`，默认 `resukisu` 分支） |
+| 设备树基线 | `Inkypen79/device_xiaomi_odin`（LineageOS 23.2 分支） |
+| 内核配置 | `arch/arm64/configs/odin_defconfig` |
+| 分区 | A/B，`boot` + 独立 `dtbo` + `vendor_boot`；boot header v3 |
+| 根方案 | BakaSU `v4.2.0-rc3`（KernelSU 系，SUSFS inline hook） |
 | 工具链 | ZyCromerZ Clang 14.0.6 |
-| 内核类型 | **非 GKI**，vendor 树 |
+| 内核类型 | **非 GKI**，vendor 树（`TARGET_KERNEL_SOURCE := kernel/xiaomi/odin`） |
+
+### 为什么是 BakaSU，而不是 ReSukiSU / FinaSU
+
+- ReSukiSU 已经改名并转入 [Baka-SU/BakaSU](https://github.com/Baka-SU/BakaSU) 继续维护，发布 APK 仍以 `ReSukiSU_v4.2.0-*` 命名。
+- Inkypen79 的 `resukisu` 分支，其 `KernelSU` 子模块 commit `2c68261` 实际就指向 `Baka-SU/BakaSU`；
+  这个分支本质上是 **BakaSU + SUSFS 的 5.4 内核树**，不是已经停止维护的旧代码。
+- BakaSU 自带非 GKI 兼容层（`kernel/compat`、`tools/kernel_compat.mk`）和 5.4 的 inline SUSFS 检查，
+  因此**不再需要** venus 仓库里那套 FinaSU 专用的 5.4 兼容层（`preflight.sh` / `susfs-setup.sh` / `ksu54-compat.h`）。
+- 本仓库保留 `resukisu` 分支作为内核基线，只把 `KernelSU/` 目录替换成 BakaSU 源码；
+  `drivers/kernelsu -> ../KernelSU/kernel` 符号链接沿用内核树里的定义。
 
 ---
 
 ## 快速开始
 
-1. 到 **[Releases](../../releases)** 下载 **[`ak3-susfs-6`](https://github.com/cvbyisme/venus-kernel-finaisu/releases/tag/ak3-susfs-6)**（最新稳定包：FinaSU v1.5.0 + uname procfs 伪装）或最新的 `venus-test-*`
-2. 进 **TWRP** 刷入或者APP刷入
-3. 重启，打开 FinaSU —— 首屏显示 **「工作中」** 即完成
+1. 到 **Actions** 手动运行 `Build odin kernel with BakaSU`（即 `build-bakasu.yml`）
+2. 下载 artifact `odin-bakasu-kernel`，或取 Release 里的 `odin-BakaSU-*.zip`
+3. 进 **TWRP** 刷入（或支持 AnyKernel3 的内核刷写 App）
+4. 重启，打开 **BakaSU / ReSukiSU v4.2.0-rc3** 管理器 —— 首屏显示已获取 root 即完成
 
-**管理器版本要对上**：内核编入的是 FinaSU 的管理器签名与协议版本，管理器 APK 与内核不匹配时会表现为「不识别 / 只读」。
+> 建议在**用同一棵 `kernel_xiaomi_odin` 源码编译的 ROM** 上使用；跨 ROM 刷 boot 时
+> `vendor_boot` / `vendor_dlkm` 里的内核模块可能因 vermagic 不匹配而加载失败（见「风险与限制」）。
 
-| 内核内嵌 | 用哪个管理器 |
-|---|---|
-| FinaSU `v1.4.2`（现行主线） | FinaSU v1.4.2 及其后的同签 APK |
-| FinaSU `v1.2.1`（历史构建线 `fix-v121.yml`） | 必须配 v1.2.1 时期的旧 APK，混用会识别失败 |
+**管理器版本要对上**：AK3 内嵌的 ksud 从 BakaSU v4.2.0-rc3 的 APK 中提取；
+管理器 APK 与内核不匹配时会表现为「不识别 / 只读」。
 
-**确认刷的是自编内核**：`uname -r` 形如 `5.4.302-Neko-CL-g<hash>`；若仍是 `5.4.274-qgki-gcc3ec22f5061`，说明 boot 没刷进去。
+**确认刷的是自编内核**：`uname -r` 形如 `5.4.302-Baka-CL-<日期>-<随机>`；
+若仍是原厂 `5.4.x-qgki-...`，说明 boot 没刷进去。
 
+### 刷机前
+
+- 备份原厂 `boot.img`（有 TWRP 就备份 `boot_a`；A/B 机型注意当前 slot）
+- 本包只写 **boot**，不改 `dtbo` / `vendor_boot`
+- 首次刷建议准备好可进入的 TWRP 或原厂 boot，方便回滚
 
 ---
 
-## 核心
+## 相对 venus（FinaSU）仓库改了什么
 
-### 一、头文件法：用 `-include` 造 5.4 兼容层
-
-**问题**：FinaSU 基线是 5.10+，vendor 5.4 树缺三个头文件、缺 `*_from_user_nofault` 系列、`TWA_*` 枚举也不存在。
-
-**做法**：`scripts/preflight.sh` 生成兼容头 + `scripts/ksu54-compat.h` 补齐定义：
-
-| 缺失项 | 来自版本 | 处理方式 |
+| 项 | venus / FinaSU | odin / BakaSU（本仓库） |
 |---|---|---|
-| `<linux/pgtable.h>` | 5.8 拆出 | 生成壳 → `<asm/pgtable.h>`，补 `__p4d_to_phys` |
-| `<linux/minmax.h>` | 5.10 拆出 | 生成壳 → `<linux/kernel.h>`，补 `min_t` / `max_t` |
-| `<linux/hex.h>` | 6.2 拆出 | 生成壳 → `<linux/kernel.h>` |
-| `{strncpy,copy_from,copy_to}_user_nofault` | 5.8 | `pagefault_disable` + 原子拷贝，手写实现 |
-| `untagged_addr()` | 5.7 | 恒等宏（arm64 5.4 不做 tag 扩展） |
-| `TWA_RESUME` / `TWA_NONE` / `TWA_SIGNAL` | 5.8 | `#define` 成 `true` / `false` |
+| 内核仓库 | `cvbyisme/..._miyume` @ `main` | `Inkypen79/kernel_xiaomi_odin` @ `resukisu` |
+| 根方案 | FinaSU v1.5.0（KernelSU fork） | BakaSU v4.2.0-rc3（KernelSU 系） |
+| defconfig | `venus_defconfig` | `odin_defconfig` |
+| hook 方式 | FinaSU tracepoint + `ksu54-compat` 兼容层 | BakaSU **SUSFS inline**（`CONFIG_KSU_SUSFS=y`） |
+| SUSFS 来源 | 内核树 v2.1.0 + 脚本对齐 v2.3.0 | 内核树自带 v2.1.0，BakaSU 直接读取/展示 |
+| 兼容脚本 | `preflight.sh` / `susfs-setup.sh` / `ksu54-*` | **不需要**（BakaSU 自带 `kernel/compat`） |
+| 签名参数 | `KSU_SECOND_SIGNATURE_RELEASE` / `KSU_EXPECTED_*2` | **不需要**（BakaSU 内置 ReSukiSU 签名默认值） |
+| AnyKernel3 设备名 | `venus` | `odin` |
+| 分区 | boot | boot（A/B，`IS_SLOT_DEVICE=1`） |
+| 产物 | `venus-*` | `odin-*` / `odin-bakasu-*` |
 
-**关键一步**：不逐个文件 `sed` 改 include，而是往 FinaSU 的 `KernelSU/Kbuild` 末尾追加一行 ——
+### 关于 5.4 的 hook 选择
 
-```make
-ccflags-y += -include $(srctree)/include/linux/ksu54_compat.h
+BakaSU 的 Kconfig 默认是 `KSU_TRACEPOINT_HOOK`，但注释明确写它只支持 GKI 2.0（5.10+）。
+5.4 上必须选 **`KSU_SUSFS`（SUSFS inline hook）** 或 `KSU_MANUAL_HOOK`。
+本仓库沿用内核树 `resukisu` 的现成 inline 调用点：
+
+```text
+CONFIG_KSU=y
+CONFIG_KSU_SUSFS=y          # 同时是 hook 方式与 SUSFS 功能开关
+CONFIG_KSU_SUSFS_SUS_PATH=y
+...
+# CONFIG_KSU_TRACEPOINT_HOOK is not set
 ```
 
-所有翻译单元一次性命中，**内核源文件一行都不用改**，也不插入任何 `ksu_handle_*` 调用点。
+workflow 会显式 `--disable KSU_TRACEPOINT_HOOK`，并在配置门禁里检查它没有落回 `=y`，
+否则 BakaSU 的 Kbuild 会在编译期直接报错（TP hooks incompatible with Non-GKI）。
 
-`preflight.sh`（现行 v2）另外处理三件事：
+### 构建流程
 
-- **devpts / vfs_fstat 等桩函数**从 `feature/sucompat.c` 挪到 `extension/` 独立对象，避免与 SUSFS 关闭时的链接缺符号互斥
-- **preinit 关闭不能只靠 `-DKSU_NO_PREINIT`**（调用方自己 extern 声明会继续产生外部引用）→ 改从 Kbuild 摘掉 `preinit/*.o` 并注册真实空实现 `.c`
-- **SUSFS 关闭时**补一份签名与 vendor 树 extern 完全匹配的 `ksu_handle_*` stub（`sys_reboot` 必须返回 `-EINVAL` 让真 reboot 流程继续）
-
-> `scripts/ksu54-compat.sh` / `ksu54-v121.sh` 是早期「逐文件打补丁」版本，现在只作排查与备用；主线已切到 `preflight.sh`。
-
-### 二、ksud 策略：默认内嵌匹配版本（+ 清理旧版兜底）
-
-**为什么必须处理**：Android 16 的 app seccomp 拦掉了 `syscall(SYS_reboot, ...)` 这条路，ksud 只能先扫 `/proc/self/fd` 拿内核注入的 fd；而内核 sucompat 注入 fd 时重定向的目标固定是 `/data/adb/ksud`。**文件缺失 = 两条路全断**，FinaSU 只会显示「获取 Root 失败」。
-
-**当前策略**（`embed_ksud` 默认 `true`）：
-
-1. **内核侧 fallback**（`scripts/ksu-su-fallback.sh`）：ksud 缺失时改用 `SH_PATH=/system/bin/sh` 直通，保证没有 ksud 时也能拿到 root shell。该宏在 FinaSU 源码里早已定义但从未被使用（死代码），这里接上。
-2. **AK3 统一处理**（`scripts/ak3-ksud.sh`，CI 打包时**无论 `embed_ksud` 真假都会 append** 到 `anykernel.sh` 末尾）：
-   - `embed_ksud=true`（默认）：从 FinaSU APK 抽 `lib/arm64-v8a/libksud.so`，装到 `/data/adb/ksud`（覆盖设备旧版）+ `/data/adb/ksu/bin/ksud` 软链；失败落到 `/sdcard/Download/ksud` 并生成 `ksud-install.sh`
-   - `embed_ksud=false`（可选）：**删除设备上残留的 `/data/adb/ksud` 与 `/data/adb/ksu/bin/ksud`**，由管理器首次启动安装匹配版本
-
-> ⚠️ **为什么默认内嵌**：管理器升级到 v1.5.0 后，设备上残留的 v1.4.2 ksud 会与新版管理器版本不匹配、后台反复重试。实测空载亮屏功耗从 **1.32W 涨到 2.65W**。内嵌匹配版本可以直接覆盖旧版，一步到位。
->
-> **不内嵌（`embed_ksud=false`）的副作用**：首次开机没有 ksud，模块（overlay 挂载依赖 ksud 的 post-fs-data）会全部失效，管理器装好 ksud 后通常要**重启两次**才恢复正常（root 不受影响，走内核 su fallback）。实测 2026-11-08。仅在没有 ksud 的极致形态或排查时才用。
-
-**已验证**（2026-11-02，TWRP 实机）：
-
-```
-- /data/adb/ksud installed
-- reboot, then open FinaSU (root ready)
+```text
+clone kernel (resukisu) → sched-tune
+→ 克隆 BakaSU（完整 git 历史，tag v4.2.0-rc3）覆盖 KernelSU/
+→ clang 14.0.6 构建 odin_defconfig（KSU_SUSFS inline）
+→ 配置门禁（KSU / KSU_SUSFS / sub-options / KPROBES / 非 TRACEPOINT）
+→ Image + Image.gz
+→ AnyKernel3（device=odin, BLOCK=/dev/block/bootdevice/by-name/boot）
 ```
 
-落地校验：`/data/adb/ksud` 7717840 B，md5 `2c5fc89e…`，SELinux 上下文 `u:object_r:ksu_file:s0`（由 ksud 运行时自动重设）。
-
-**几个关键认知**
-
-| 认知 | 说明 |
-|---|---|
-| `/data/adb` 在 TWRP **可写** | 它是 DE 区，只要 `/data` 挂载成功就写得了；拿 `/data/system`（CE 区）判断会误判成「加密未解」 |
-| TWRP 的 busybox 很精简 | 常见缺 `chcon`、不支持 `ls -Z`；脚本已做守卫，上下文由 ksud 运行时自设 |
-| App 内刷写**不执行** `update-binary` | FinaSU / KernelFlasher 直接用 magiskboot patch boot 分区，AK3 脚本只在 TWRP 下生效 |
-| 刷 boot 不会清 `/data/adb` | 所以 ksud 只需装一次，之后换内核包也不会丢 |
-
-### 三、SUSFS 集成与协议对齐（v2.3.0）
-
-本树**自带** SUSFS v2.1.0（源码在 `fs/susfs.c` 等，不从上游下载），`scripts/susfs-setup.sh` 负责把它接进 FinaSU 与 5.4 内核。
-
-FinaSU v1.4.2 的 ksud 要求内核 SUSFS 版本字符串**精确等于 `v2.3.0`**，否则判定 `unknown_protocol`，管理器 SUSFS 页只读、全功能不可用。v2.1.0 与 v2.3.0 的用户态协议完全兼容（23 个 `CMD_SUSFS_*` 编号逐一相同、`st_susfs_*` wire 结构布局一致，差异只在内核内部实现）。因此 `scripts/susfs-version.sh` 让内核如实汇报 `v2.3.0`，并顺手修掉 v2.1.0 的 `KSTAT_SPOOF_CTIME_TV_SEC (1 < 8)` 笔误（应为 `(1 << 8)`）。
-
-钩子后端采用 **Tracepoint**：FinaSU 的 `SUSFS Inline` 后端在 5.4 上会导致内核 panic（init exec 路径，连 recovery 也无法进入），已实机复现，故不采用。
-
-> 历史现象：早期版本 SUSFS 一直报「未知协议」，dmesg 里 `show_version` / `show_variant` / `get_enabled_features` 均 `ret:0`（内核能响应 ioctl），最终定位为版本字符串不一致 —— 已由 `susfs-version.sh` 彻底解决，不是集成方式问题。
-
-### 四、SELinux 隐藏（5.7+ API 的 5.4 backport，双层拦截）
-
-5.4 没有 `struct selinux_policy`（5.7 才引入），早期的兼容层直接把 `selinux_hide` 整块 stub 成空实现，等于该功能不存在。现在改为**真正的 backport**，并且行为语义按探测器文档对齐：
-
-探测器不是单点检查，而是**分层的**：`type 名存在性` → `access 规则位` → `status/sequence 自洽` → `重复性 / syscall-libc 交叉比对`。所以这里按层拦截。
-
-#### 第一层：原生 type 白名单（context oracle）
-启动时对 policydb 做一次快照，记下全部原生 type 名（本机 3903 个）。写入 `/sys/fs/selinux/context` 的 context 若满足下列任一条件，返回 `-EINVAL`（探测器把 `EINVAL` 判为「不存在」）：
-- type 段不在原生白名单里
-- 名字命中 `ksu` / `susfs` / `lsposed` / `magisk` / `xposed` / `riru` / `zygisk` / `tricky` / `sukisu` / `apatch` / `kernelsu` 关键词
-
-原生 type 全部放行。写 `/proc/self/attr/current` 时同样返回 `-EINVAL` —— **绝不能返回 `EPERM`**，探测器把 `EPERM` 判为「存在」（这是参考实现 `DirtySepolicy` 的判定口径）。
-
-#### 第二层：access 规则位掩码（AVD）
-命中敏感组合时，在应答返回前把对应允许位剥掉，并保持 `avd.seqno = 1`：
-
-| 源域 | 目标 | 权限 |
-|---|---|---|
-| `system_server` | 自身 | `process:execmem` |
-| `zygote` | `adb_data_file` | `dir:search` |
-| `shell` | `su` | `process:transition` |
-| `kernel` | `adb_data_file` | `file:read` |
-| `system_server` | `apk_data_file` | `file:execute` |
-| `dex2oat` | `dex2oat_exec` | `file:execute_no_trans` |
-| `rootfs` | `tmpfs` | `filesystem:associate` |
-| `kernel` | `tmpfs` | `file:open` |
-
-实现细节（5.4 树）：
-- `type` 取 context **第 3 段**，关键词优先匹配；比较时忽略 MLS 段（探测器会带 `:c512,c768`）
-- 白名单快照**只尝试一次**（重试会抓到已被 KSU 注入的 policy）
-- 权限位查找：先查 class 自己的 `permissions`，找不到再回退 `comdatum->permissions`（`file` 类的 `read` / `execute` 定义在 common class 里）
-- 5.4 的 `struct symtab` 内是**指针**：正确写法 `p_types.table->htable[i]`，写 `p_types.htable` 编译不过
-
-#### 反例（都会被打回）
-
-| 做法 | 命中的判定 |
-|---|---|
-| 关键词黑名单 / 随机化 type 名 | type 依然在 policydb 里，第一层就命中 |
-| 只做 type 白名单 | type 层过了，`system_server execmem` / `zygote -> adb_data_file search` 仍是 allow |
-| 对特权域一律拒绝 | direct syscall and libc views disagree（正控被拒） |
-
-#### 诊断
-
-`dmesg | grep ksu54` 可见：`oracle "…" cnt=3903 foreign=0`、`ctx-write uid=… size=…`、`mask avd <scon> -> <tcon> perm=<perm>`。
-
-> ⚠️ **构建链路坑**：`scripts/susfs-setup.sh` 是多段 heredoc 脚本。早期 step7 的 anchor 匹配失败会 `raise SystemExit`，`set -e` 让整个脚本非 0 退出，又被 workflow 的 `|| echo "##[warning]partially applied"` 吞掉 —— 于是 step8 / step4g / verification **全部不执行**，SELinux 侧改动一个都没进内核，而 job 仍显示 success。现改为打印并正常退出，step4g 也提前到 step4e 之后；排查时务必在 CI 日志里 grep `=== [SUSFS] step4g`。
-
-### 五、功耗调优（已启用，实机验证）
-
-**背景**：`venus_defconfig` 未设置默认 governor，Kconfig 会兜底成 `performance` —— 8 核恒满频，日常功耗/发热偏高。
-
-**排查记录**（小米 11 实机）：直接设默认 `schedutil` 会卡第一屏（小米 logo，recovery 可进，非 panic）。逐项二分：
-
-| 组合 | 结果 |
-|---|---|
-| `performance` 默认 | 正常（满频） |
-| `conservative` 默认 | 正常 |
-| `schedutil` 默认（纯 / 禁 fast_switch） | **卡 logo** |
-| `schedutil` 默认 + 强制 PELT 信号 | **正常** |
-
-→ 根因：schedutil 的 **WALT util 信号路径**在早期启动时序下挂死；改用内核原生 **PELT** 信号即可。WALT 调度器本身保留（任务放置 / boost 不变）。
-
-**正式方案**（构建时自动应用）：
-
-| 组件 | 文件 | 作用 |
-|---|---|---|
-| 默认 governor | `scripts/power-tune.sh` | 构建时把默认 governor 从 `performance` 改为 `schedutil` |
-| PELT 修复 | `scripts/sched-patches/pelt-force.patch` | schedutil 强制 PELT util 路径（**必需**，否则卡 logo） |
-| 输入提升 | `scripts/sched-patches/s1-input-boost-off.patch` | `cpu-boost` 输入提升主开关默认关：触摸不再拉高 min 频；运行时 `echo 1 > /sys/devices/system/cpu/cpu_boost/input_boost` 可恢复 |
-| IO 推频 | `scripts/sched-patches/s2-io-is-busy-off.patch` | WALT `io_is_busy` 默认 0：IO 等待不再推高频 |
-
-补丁由 `scripts/sched-tune.sh` 在 CI 克隆内核后应用，带幂等与 `git apply --check` 门禁；内核树漂移时显式失败，不静默跳过。三条构建线（`build-susfs.yml` / `build.yml` / `pure.yml`）均已接入，**workflow 默认即省电形态**，无需额外勾选。
-
-> **第二个坑（2026-11-07 实机定位）**：管理器升级 v1.5.0 后，若设备上仍是旧版 ksud（v1.4.2），空载亮屏功耗 2.65W；换成匹配的 v1.5.0 ksud（或彻底删掉 ksud）后回到 1.32W。根因不是内核调度，而是管理器与旧 ksud 后台握手重试。因此 AK3 加了「不内嵌时自动清理旧 ksud」逻辑，见第二节。
-
-> 早期在 `power-wip` 分支上试验的 `WQ_POWER_EFFICIENT_DEFAULT` / `SCHED_DEBUG` / `PROFILING` 未纳入正式版：`SCHED_DEBUG` 在最终配置里本就由依赖关系决定（无收益），另两项收益小、且与卡屏问题无关，故不启用。
+> BakaSU 的 Kbuild 会用 `git describe` / `git rev-list --count` 计算版本，
+> 并要求 `KernelSU` 是真正的 git 仓库，所以 workflow 对 BakaSU 使用**完整 clone**，不能用 `--depth 1`。
 
 ---
 
 ## 构建
 
-全部 workflow 都是 **`workflow_dispatch` 手动触发**，单次全量约 **28 分钟**，产物在 Actions artifact 与 Releases 里。
-
-### Workflows
+所有 workflow 都是 `workflow_dispatch` 手动触发。
 
 | 文件 | 作用 |
 |---|---|
-| `build-susfs.yml` | **现行主线**：FinaSU + SUSFS + preflight v2 + 功耗调优（PELT）+ 默认内嵌匹配版本 ksud（AK3 覆写旧版）；带 `disable_preinit` / `disable_susfs` 诊断开关，发布 `venus-test-<n>` |
-| `build.yml` | 上一代主线：FinaSU + SUSFS（走 `susfs-setup.sh`，无 preflight v2 / 无版本对齐）+ 功耗调优，发布 `test-run-<n>` |
-| `pure.yml` | 不带 root 的纯净内核（同样接功耗调优），用于排查与回退 |
-| `pack.yml` / `pack-pure.yml` | 不重编，直接对已有 run 的 artifact 重新打 AK3 包 |
-| `fix.yml` / `fix-v121.yml` | 历史构建线（preinit 二分、FinaSU v1.2.1 适配），保留作参考 |
+| `build-bakasu.yml` | **主线**：BakaSU v4.2.0-rc3 + SUSFS inline + 功耗调优 + ksud 内嵌；发布 `odin-bakasu-<n>` |
+| `pure.yml` | 不含 root/SUSFS 的纯内核，用于排查基线 / 工具链 / 模块 vermagic |
+| `pack.yml` / `pack-pure.yml` | 对已有 run 的 artifact 重新打 AnyKernel3 包 |
 
-### Scripts
+### 常用输入
+
+- `kernel_repo` / `kernel_ref`：默认 `Inkypen79/kernel_xiaomi_odin` / `resukisu`
+- `bakasu_ref`：BakaSU ref，默认 `v4.2.0-rc3`
+- `ksud_apk_url`：用于抽 `libksud.so` 的管理器 APK，默认对应 v4.2.0-rc3 的 arm64 APK
+- `embed_ksud`：是否在 AK3 内嵌匹配版本的 ksud（默认 true）
+
+### 脚本
 
 | 文件 | 作用 |
 |---|---|
-| `scripts/preflight.sh` | **现行** 5.4 兼容层施工（头文件壳、`-include` 注入、桩函数对象迁移、前置校验） |
-| `scripts/ksu54-compat.h` | 兼容头本体（被 `-include` 全局注入） |
-| `scripts/susfs-setup.sh` | SUSFS 5.4 移植（接进 FinaSU 与内核树） |
-| `scripts/susfs-version.sh` | SUSFS 版本对齐（v2.1.0 内核如实汇报 v2.3.0 协议，修 ctime 笔误） |
-| `scripts/susfs-uname-proc.sh` | uname procfs 伪装：`/proc/version` 与 `/proc/sys/kernel/{osrelease,version}` 接到 SUSFS uname 缓冲，与 `uname(2)` 保持一致 |
-| `scripts/power-tune.sh` | 默认 governor 改 `schedutil`（含 verify 模式） |
-| `scripts/sched-tune.sh` | 应用 `scripts/sched-patches/*.patch`（幂等 + `git apply --check`） |
-| `scripts/sched-patches/` | `pelt-force` / `s1-input-boost-off` / `s2-io-is-busy-off` 三个补丁 |
-| `scripts/venus-selftest.sh` | **刷完自检**：内核身份 / KSU feature / SELinux 域 / governor / zram / 电池 / 补丁日期 / 模块 / dmesg 异常扫描 / boot 备份，输出 PASS-WARN-FAIL 表 |
-| `scripts/collect-logs.sh` | 一键收集日志打包 zip，给别人排错用（dmesg、logcat、pstore、ksud.log 全带） |
-| `scripts/ak3-ksud.sh` | AK3 ksud 处理：内嵌时装/覆盖，不内嵌时删除设备旧版（防版本不匹配耗电） |
-| `scripts/ksu-su-fallback.sh` | 内核侧 sucompat fallback（第一层保险） |
-| `scripts/ksu54-compat.sh`、`scripts/ksu54-v121.sh` | 早期逐文件补丁版，历史·备用 |
+| `scripts/power-tune.sh` | 默认 governor 改 `schedutil` |
+| `scripts/sched-tune.sh` | 应用 `sched-patches/*.patch`（幂等 + `git apply --check` 门禁） |
+| `scripts/sched-patches/pelt-force.patch` | schedutil 强制 PELT util 路径（按 odin 源码生成） |
+| `scripts/sched-patches/s1-input-boost-off.patch` | `cpu-boost` 输入提升默认关 |
+| `scripts/sched-patches/s2-io-is-busy-off.patch` | WALT `io_is_busy` 默认 0 |
+| `scripts/ak3-ksud.sh` | AK3 内嵌 / 清理 ksud |
+| `scripts/odin-selftest.sh` | 刷完自检（PASS/WARN/FAIL 表） |
+| `scripts/collect-logs.sh` | 一键收集日志打包 zip |
 
-> CI 里 `actions/checkout` 用 `path: ci`，所以脚本的真实路径是 `ci/scripts/*`（= 仓库 `scripts/*`）。
-
-### 构建门禁
-
-`ksu_handle_*`、`CONFIG_KSU`、`CONFIG_KSU_SUSFS_*`、`CONFIG_KPROBES` 这些符号**静默缺失**（`scripts/config` 不校验依赖，`olddefconfig` 阶段被丢弃且不报错）是踩过最深的坑之一。现在 workflow 在编译后会做一次硬门禁：逐项 grep `.config`，缺任一项就 `::error::` + 打印依赖诊断并 `exit 1`，绝不放出「能刷但没有 root」的产物。
+> CI 里 `actions/checkout` 使用 `path: ci`，所以脚本路径是 `ci/scripts/*`。
 
 ---
 
 ## 刷完自检
 
-刷完重启后建议先跑一遍自检，确认内核真的活了，而不是只看能不能开机：
+```sh
+curl -sL -o /sdcard/Download/odin-selftest.sh \
+  https://raw.githubusercontent.com/<你的账号>/odin-kernel-bakasu/main/scripts/odin-selftest.sh
+su -c 'sh /sdcard/Download/odin-selftest.sh'
+```
+
+检查项：内核身份（`/proc/version` 含 `Baka-CL`）、BakaSU feature、SELinux 域、
+三簇 governor、input_boost / io_is_busy、zram、电池、安全补丁、模块、dmesg 异常、boot 备份。
+报告落在 `/sdcard/Download/odin-selftest-<时间>.txt`。
+
+收集日志：
 
 ```sh
-curl -sL -o /sdcard/Download/venus-selftest.sh \
-  https://raw.githubusercontent.com/cvbyisme/venus-kernel-finaisu/main/scripts/venus-selftest.sh
-su -c 'sh /sdcard/Download/venus-selftest.sh'
-```
-
-输出一张 `PASS / WARN / FAIL / SKIP` 汇总表，详细报告落在 `/sdcard/Download/venus-selftest-<时间>.txt`。检查项：
-
-| 段 | 检查内容 |
-|---|---|
-| 1 | `/proc/version` 是否含 `Neko-CL`（`uname -r` 会被 uts spoof 改写成 `5.4.274-qgki`，**不可信**） |
-| 2 | `ksud -V` 与 `selinux_hide` / `avc_spoof` / `su_compat` / `kernel_umount` 是否 ENABLED |
-| 3 | `getenforce`、root 域是否 `u:r:ksu:s0`、`dmesg` 里 `ksu54` 掩码日志 |
-| 4 | 三个簇的 governor 是否 `schedutil`、`input_boost` / `io_is_busy` 是否关闭 |
-| 5 | meminfo、`zram0` disksize 与压缩算法 |
-| 6 | 电池 `capacity` / `status` / `charge_counter` / `voltage_now` |
-| 7 | 三个安全补丁属性，以及与 `/system/build.prop` 的差异（差异属伪装正常） |
-| 8 | 已装模块数、`venus_spoof_security_patch` / `tricky_store` / `zygisksu` 是否在 `modules` 而非 `modules_update` |
-| 9 | dmesg 扫 `Kernel panic` / `Oops` / `soft lockup` / `sleeping function` / `Call trace` / `Watchdog bark`；另统计 `avc denied` 条数与 top3 来源域；`audit_lost` 只在仍在增长时告警（开机阶段累计属正常） |
-| 10 | `boot_a` / `vendor_boot_a` / `dtbo_a` 备份是否存在且体积正常 |
-
-> 想给别人看日志用 `scripts/collect-logs.sh`；想确认自己刷成功用 `scripts/venus-selftest.sh`。
-
----
-
-## Releases
-
-**推荐**
-
-| Tag | 内容 |
-|---|---|
-| **[`ak3-susfs-6`](https://github.com/cvbyisme/venus-kernel-finaisu/releases/tag/ak3-susfs-6)** | **当前稳定版**：ak3-susfs-5 + uname procfs 伪装（`/proc/version`、`/proc/sys/kernel/{osrelease,version}` 与 `uname(2)` 一致；app 侧 zygote 缓存限制见第六节） |
-| `ak3-susfs-5` | FinaSU v1.5.0 基线稳定版（无 uname procfs 伪装）：FinaSU v1.5.0（保留两个内核 SELinux 提交）+ 5.4 AVC seqno 兼容补丁 + **默认内嵌匹配版本 ksud**（TWRP 刷入直接覆盖旧版，模块首次开机即正常）；空载亮屏约 1.3W（2026-11-08 实机验证） |
-| `ak3-susfs-4` | 上一稳定版：同内核，但默认不内嵌 ksud（刷入删除旧版，首次开机模块会失效、需重启两次恢复） |
-| `ak3-susfs-2` | FinaSU + SUSFS v2.3.0 + SELinux 隐藏双层修复，春秋 native 4.6.2 探测通过（2026-11-07） |
-| `ak3-susfs-1` | 更早稳定版（2026-11-04）。SELinux 隐藏实际未生效（构建脚本在 step7 中断） |
-| `venus-test-<n>` | 主线测试构建，跟踪最新改动（`venus-test-36` 与 `ak3-susfs-5` 为同一产物，sha256 一致） |
-
-**历史**
-
-| Tag | 内容 |
-|---|---|
-| `ak3-ksud-v3` | FinaSU + AK3 内置 ksud（2026-11-02 实机验证） |
-| `pure-ak3-1` | 纯净内核（无 root），用于排查与回退 |
-| `susfs-test-1` / `susfs-test-2` | 早期 FinaSU + SUSFS 试验包 |
-| `ak3-1` / `ksuns-5` | 更早的构建产物 |
-
----
-
-## 注意（很重要）
-
-- 从 **FinaSU 管理器 / KernelFlasher** 这类 App 内刷写时，刷写器用 `magiskboot` 直接 patch boot 分区，**不执行 `update-binary`** —— 所以 AK3 脚本（含 ksud 清理）只在 **TWRP** 下生效。
-- 刷 boot 分区不会清掉 `/data/adb/ksud`，所以要更新或删除 ksud 必须靠 AK3 脚本（TWRP 刷入）或手动命令。
-- 当前默认**内嵌匹配版本 ksud**：刷入时直接覆盖设备旧版，不存在「无 ksud 空窗」，模块第一次开机即正常；内核侧 `ksu-su-fallback` 仍然保留作为兜底。若手动选 `embed_ksud=false`，刷入时会删除旧版 ksud，首次开机模块会失效，管理器装好 ksud 后需重启两次恢复。
-
----
-
-## 踩坑速查
-
-| 现象 | 原因 |
-|---|---|
-| 卡第一屏 / 黑屏重启 | 内核树 hook 调用点来自 v1.2.1 时代，却拼了 master 的实现（签名、符号名全对不上） |
-| 卡小米 logo（recovery 可进、非 panic） | 默认 governor 设了 `schedutil` 却没应用 `pelt-force` 补丁：WALT util 信号路径早期挂死 → 应用 PELT 补丁，或回退 `conservative`/`performance` |
-| FinaSU 报「获取 Root 失败」 | `/data/adb/ksud` 缺失 + Android 16 seccomp 拦 reboot syscall → 内核 fallback + AK3 内置 ksud 双保险 |
-| 升级管理器后空载功耗升高（~2.6W，且 `avc` / `ksu54` 日志都不多） | 设备上的旧版 ksud 与新版管理器版本不匹配，后台反复重试 → 本仓库包默认内嵌匹配版本、刷入即覆盖；手动：`su -c 'rm -f /data/adb/ksud /data/adb/ksu/bin/ksud'` 后由管理器重装 |
-| 刷完首次开机模块全失效、root 正常，重启两次才恢复 | 用了 `embed_ksud=false`：首次开机没有 ksud，模块（依赖 ksud 的 post-fs-data overlay 挂载）全部未加载；管理器装好匹配版本后需再重启一到两次。默认 `embed_ksud=true` 不会出现 |
-| SUSFS 页只读 / `unknown_protocol` | 内核汇报的版本字符串 ≠ `v2.3.0` → `susfs-version.sh` 对齐（v2.1.0 内核可如实汇报） |
-| 管理器不识别 / 全功能不可用 | 管理器 APK 与内核内嵌签名/版本不对应（v1.2.1 内核不能配新 APK） |
-| 春秋探测器报「zygote 有 selinuxfs 权限」 | 对 `/sys/fs/selinux/access` 的写没有按原生语义返回 `EACCES`（用了 `-EINVAL` 或随机化 type） |
-| 春秋探测器报 `direct syscall and libc views disagree` | 对特权域也一律拒绝 → 只对非特权域拒绝 |
-| 春秋报 `system_server execmem` / `zygote -> adb_data_file search` | type 层已拦住，探测器下探到 access 规则位 → `ksu54_mask_avd()` 掩码 |
-| 改了 SELinux 代码但行为没变、`dmesg \| grep ksu54` 全空 | `susfs-setup.sh` 中途退出，后续 step 未执行 → 检查 CI 日志有没有 `=== [SUSFS] step4g` |
-| `fatal error: 'linux/pgtable.h' file not found` | 5.8 才拆出的头文件，5.4 没有 → 交给头文件法兜底 |
-| `undefined symbol: ksu_handle_devpts` 等 | vendor 树仍带旧 hook，FinaSU 已不实现 → 补签名精确匹配的 stub |
-| `-DKSU_NO_PREINIT` 不生效 | 调用方自己 extern 声明，仍产生外部引用 → 摘掉对象 + 真实空实现 |
-| AK3 里 `chcon: not found` / `ls: invalid option -- Z` | osm0sis busybox 精简 → 已加守卫，不影响功能 |
-| 编译出「无 root」的 Image | `CONFIG_KSU` 依赖被静默丢弃（缺 `CONFIG_KPROBES` / `CONFIG_EXT4_FS`）→ 已有硬门禁拦截 |
-
----
-
-## 刷机风险提示
-
-- 涉及 boot 分区，**刷前务必备份原厂 boot**
-- 首次刷建议备好原厂 `boot.img` 或可进入的 TWRP，方便回滚
-- 内核与 ROM 版本强相关，跨大版本 ROM 升级后可能需要重刷
-- 卡第一屏时 kernel panic 往往来不及写 pstore，TWRP 里读不到日志属于正常现象，不是「没有线索」
-
----
-
-## 目录结构
-
-```
-.github/workflows/     CI 定义
-scripts/               构建、功耗调优与 AK3 脚本
-  sched-patches/       schedutil / cpu-boost / WALT 补丁
-README.md              本文档
-LICENSE                许可证
+su -c 'sh /sdcard/Download/collect-logs.sh'
+# 产物 /sdcard/Download/odin-logs-<时间>.zip
 ```
 
 ---
 
-## 贡献者
+## 风险与限制
 
-| 贡献者 | 贡献 |
-|---|---|
-| **@cvbyisme** | 项目发起、内核 fork 维护、构建与实机验证 |
-| **@LuNanzhi**（仓库共创者） | 关键贡献：preflight 兼容层思路、bugreport 定位、AK3 内置 ksud 可行路线与成功设备取证、功耗调优方案与实机二分 |
-| 大肥鱼 | 代码实现、CI 调试、文档撰写 |
+- **未在 MIX 4 实机验证**：只做了静态验证（补丁可应用、BakaSU 与内核符号互相匹配、YAML/脚本语法）。
+- **ROM / 内核模块依赖（MIX 4 尤其重要）**：
+  设备树把 `msm_drm.ko`、`fts_touch_spi.ko`、`hwid.ko`、`xiaomi_touch.ko` 列为
+  `BOOT_KERNEL_MODULES`（至少 recovery ramdisk 会加载；正式系统里它们可能在
+  `vendor_boot` 或 `vendor_dlkm`，取决于 ROM 的打包方式），这些模块是**按 ROM 自己的
+  内核版本 / vermagic 编译**的。本仓库的 AK3 只替换 `boot` 里的 kernel，不会更新这些模块；
+  如果 ROM 内核版本与本内核（5.4.302 + `Baka-CL` 后缀）不一致，模块可能因 vermagic 不匹配
+  而加载失败，表现为黑屏 / 无触摸。推荐在用同一棵 `kernel_xiaomi_odin` 编译的 ROM 上刷入，
+  或自行把匹配的 .ko 重新打进 `vendor_boot` / `vendor_dlkm`。
+- **SUSFS 版本**：内核树自带 SUSFS v2.1.0，BakaSU v4.2.0-rc3 的管理器能读取并展示版本；
+  如果管理器要求更新的 SUSFS 命令集，部分 SUSFS 功能可能不可用，但 root 不受影响。
+- **工具链与 defconfig 的落差**：`odin_defconfig` 由 Android clang r574158（21）生成，
+  且开启了 `CONFIG_LTO_CLANG` / `CONFIG_CFI_CLANG`；本仓库沿用 ZyC clang 14.0.6。
+  clang 14 支持 5.4 的 ThinLTO/CFI，但若 CI 在 LTO/CFI 阶段报错，优先换匹配的 clang 21，
+  不要直接关 CFI——ROM 侧的 `msm_drm.ko` 等模块可能是按 CFI 编译的。
+- **AVB / Bootloader**：需要解锁 Bootloader。原厂 AVB 校验可能拒绝未签名的 boot；
+  Lineage 等自编译 ROM 通常已处理 vbmeta，本包不修改 `vbmeta`。
+- **BakaSU 不是 FinaSU**：管理器、ksud、签名都换了。不要用 FinaSU 管理器配这个内核，
+  也不要把本内核和 FinaSU 的 `KSU_SECOND_SIGNATURE_RELEASE` 参数混用。
 
 ---
 
-## 参考仓库
+## 验证状态（迁移时做过什么）
 
-- [LyraVoid/FinaSU](https://github.com/LyraVoid/FinaSU) —— root 方案本体
-- [MiYume0721/android_kernel_xiaomi_sm8350_miyume](https://github.com/MiYume0721/android_kernel_xiaomi_sm8350_miyume) —— 内核基线
+对 `Inkypen79/kernel_xiaomi_odin@resukisu` + `Baka-SU/BakaSU@v4.2.0-rc3` 做了离线验证：
+
+| 项 | 结果 |
+|---|---|
+| BakaSU 引用的 `susfs_*` 符号 | 全部能在内核 SUSFS 或 BakaSU 自身（`selinux.c` / `sucompat.h`）找到 |
+| 内核引用的 `ksu_handle_*` 符号 | BakaSU 全部提供（`execveat` / `faccessat` / `stat` / `sys_read` / `sys_reboot` / `setresuid` / `input`） |
+| BakaSU inline hook 检查所需调用点 | `fs/{exec,open,stat,read_write}.c`、`kernel/{sys,reboot}.c`、`drivers/input/input.c` 均存在 |
+| `s1` / `s2` / `pelt-force` 补丁 | 两棵 odin 树 `git apply --check` 通过 |
+| `odin_defconfig` | `KSU=y`、`KSU_SUSFS*`、`KPROBES`、`THREAD_INFO_IN_TASK`、`EXT4_FS`、`OVERLAY_FS`、`MODULES` 均存在；`KSU_TRACEPOINT_HOOK` 未启用 |
+| workflow YAML | `yaml.safe_load` 通过 |
+| shell 脚本 | `bash -n` 通过 |
+
+**没有做**：完整内核编译（本机无 Linux 工具链）与 MIX 4 实机刷入。
+
+---
+
+## 参考
+
+- [cvbyisme/venus-kernel-finaisu](https://github.com/cvbyisme/venus-kernel-finaisu) —— 方案来源
+- [Baka-SU/BakaSU](https://github.com/Baka-SU/BakaSU) —— 根方案（原 ReSukiSU）
+- [Inkypen79/kernel_xiaomi_odin](https://github.com/Inkypen79/kernel_xiaomi_odin) —— 内核源（5.4.302）
+- [Inkypen79/device_xiaomi_odin](https://github.com/Inkypen79/device_xiaomi_odin) —— MIX 4 设备树
+- [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) —— SUSFS
 - [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3) —— 刷机包模板
-- [LuNanzhi/venus-kernel-finaisu](https://github.com/LuNanzhi/venus-kernel-finaisu) —— 同设备参考实现
-
----
 
 ## License
 

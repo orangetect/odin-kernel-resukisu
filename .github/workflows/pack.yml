@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: 'Source run id with venus-finaus-kernel artifact'
-        required: false
-        default: '40270073321'
+        description: 'Source run id with odin-bakasu-kernel artifact (required)'
+        required: true
+        default: ''
 
 jobs:
   package:
@@ -18,7 +18,7 @@ jobs:
       - name: Download kernel artifact
         uses: actions/download-artifact@v4
         with:
-          name: venus-finaus-kernel
+          name: odin-bakasu-kernel
           path: artifact
           run-id: ${{ inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -39,8 +39,8 @@ jobs:
           test -n "$IMG"
           cp "$IMG" ./Image
           ls -lh Image
-          sed -i 's/^kernel.string=.*/kernel.string=venus-FinaSU by cvby/' anykernel.sh
-          sed -i 's/^device.name1=.*/device.name1=venus/' anykernel.sh
+          sed -i 's/^kernel.string=.*/kernel.string=odin-BakaSU by cvby/' anykernel.sh
+          sed -i 's/^device.name1=.*/device.name1=odin/' anykernel.sh
           sed -i 's/^device.name2=.*/device.name2=/' anykernel.sh
           sed -i 's/^device.name3=.*/device.name3=/' anykernel.sh
           sed -i 's/^device.name4=.*/device.name4=/' anykernel.sh
@@ -52,7 +52,7 @@ jobs:
           bash -n anykernel.sh
           echo 'bash syntax OK'
           chmod +x anykernel.sh
-          NAME="venus-FinaSU-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
+          NAME="odin-BakaSU-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
           zip -r9 "../${NAME}.zip" . -x "*.git*" > /dev/null
           cd ..
           ls -lh *.zip
@@ -62,19 +62,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ak3-${{ github.run_number }}
-          name: venus FinaSU AnyKernel3
+          name: odin BakaSU AnyKernel3
           body: |
-            venus (Xiaomi 11) FinaSU AnyKernel3 package
+            odin (Xiaomi MIX 4) BakaSU AnyKernel3 package
 
             NOT VERIFIED ON DEVICE. Flash at your own risk.
 
-            - Kernel 5.4.302-HoshinoNeko, ZyC clang 14.0.6
-            - FinaSU trusted slot2 = v1.2.1 signature (size 716)
-            - SUSFS 5.4 backport integrated
+            - Kernel 5.4.302, ZyC clang 14.0.6
+            - BakaSU root (KernelSU based), SUSFS inline
+            - SUSFS 5.4 integrated in the kernel tree
             - Source artifact from run ${{ inputs.run_id }}
 
             Install: flash in TWRP or a kernel flasher app.
-            Manager: must use FinaSU v1.2.1.
+            Manager: BakaSU (ReSukiSU v4.2.0-rc3 line).
             Rollback: keep a stock boot.img backup.
           files: ${{ github.workspace }}/${{ env.AK3_NAME }}.zip
           prerelease: true

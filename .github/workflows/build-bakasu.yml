@@ -1,0 +1,334 @@
+name: Build odin kernel with BakaSU
+
+on:
+  workflow_dispatch:
+    inputs:
+      bakasu_ref:
+        description: 'BakaSU git ref (tag/branch/commit)'
+        required: false
+        default: 'v4.2.0-rc3'
+      kernel_repo:
+        description: 'kernel source repo (owner/name)'
+        required: false
+        default: 'Inkypen79/kernel_xiaomi_odin'
+      kernel_ref:
+        description: 'kernel source ref (resukisu required: ships SUSFS + KSU hooks)'
+        required: false
+        default: 'resukisu'
+      ksud_apk_url:
+        description: 'BakaSU manager APK used to extract libksud.so'
+        required: false
+        default: 'https://github.com/Baka-SU/BakaSU/releases/download/v4.2.0-rc3/ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk'
+      embed_ksud:
+        description: 'Embed matching ksud into AnyKernel3 (覆盖设备旧版)'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout this CI repo
+        uses: actions/checkout@v4
+        with:
+          path: ci
+
+      - name: Checkout kernel sources
+        run: |
+          git clone --depth 1 --branch "${{ inputs.kernel_ref || 'resukisu' }}" \
+            "https://github.com/${{ inputs.kernel_repo || 'Inkypen79/kernel_xiaomi_odin' }}.git" kernel
+          echo "kernel HEAD: $(git -C kernel rev-parse --short HEAD)"
+
+      # 功耗调优：input boost 默认关、io-is-busy 默认关、
+      # schedutil 强制 PELT 信号路径（WALT 信号路径在本平台会卡小米 logo）。
+      - name: Scheduler power patches (input-boost off, io-is-busy off, schedutil PELT)
+        run: |
+          bash ci/scripts/sched-tune.sh "$PWD/kernel"
+
+      # BakaSU 需要完整 git 历史：它的 Kbuild 会 git describe/rev-list 计算版本，
+      # 并且要求 KernelSU 目录本身是 git 仓库（不是拷贝进来的源码）。
+      - name: Clone BakaSU into KernelSU/
+        run: |
+          rm -rf kernel/KernelSU
+          git clone --branch "${{ inputs.bakasu_ref || 'v4.2.0-rc3' }}" \
+            https://github.com/Baka-SU/BakaSU.git kernel/KernelSU
+          test -f kernel/KernelSU/kernel/Kconfig
+          echo "BakaSU HEAD: $(git -C kernel/KernelSU rev-parse --short HEAD)"
+          echo "BakaSU tag : $(git -C kernel/KernelSU describe --abbrev=0 --tags 2>/dev/null || echo unknown)"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential flex bison libssl-dev \
+            libelf-dev bc zip unzip python3 cpio rsync device-tree-compiler \
+            git curl wget xz-utils liblz4-dev zlib1g-dev libncurses-dev \
+            linux-libc-dev || true
+          sudo ldconfig || true
+          echo "=== libxml2 check ==="
+          ldconfig -p | grep libxml2 || echo "libxml2.so missing"
+          if ! ldconfig -p | grep -q "libxml2.so.2"; then
+            for pkg in libxml2-dev libxml2-2 libxml2-16 libxml2t64; do
+              sudo apt-get install -y -qq "$pkg" 2>/dev/null && echo "ok $pkg" || true
+            done
+            sudo ldconfig || true
+          fi
+          if ! ldconfig -p | grep -q "libxml2.so.2"; then
+            LIB=$(find /usr/lib /lib -name "libxml2.so*" 2>/dev/null | head -1)
+            echo "fallback lib: $LIB"
+            if [ -n "$LIB" ]; then
+              T=$(readlink -f "$LIB")
+              sudo ln -sf "$T" /usr/lib/x86_64-linux-gnu/libxml2.so.2 || true
+              sudo ldconfig || true
+            else
+              echo "::error::libxml2.so.2 unavailable"
+              exit 1
+            fi
+          fi
+          ldconfig -p | grep libxml2 || true
+
+      - name: Download Clang (ZyCromerZ mirror)
+        run: |
+          mkdir -p $HOME/toolchain
+          cd $HOME/toolchain
+          curl -sSL --retry 5 --retry-delay 5 -o clang.tar.gz \
+            https://github.com/ZyCromerZ/Clang/releases/download/14.0.6-20261022-release/Clang-14.0.6-20261022.tar.gz
+          tar -xzf clang.tar.gz
+          rm -f clang.tar.gz
+          CLANG_BIN=$(find "$HOME/toolchain" -maxdepth 4 -name clang \( -type f -o -type l \) | head -1)
+          if [ -z "$CLANG_BIN" ]; then
+            echo "::error::clang binary not found in toolchain tarball"
+            find "$HOME/toolchain" -maxdepth 3 | head -30
+            exit 1
+          fi
+          TCDIR=$(dirname "$CLANG_BIN")
+          echo "Toolchain bin: $TCDIR"
+          echo "TCBIN=$TCDIR" >> $GITHUB_ENV
+          "$TCDIR/clang" --version
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: odin-bakasu-${{ inputs.bakasu_ref }}
+          max-size: 2G
+
+      # 快速语法门：只编 KSU 子系统，~3-5 分钟暴露编译错误，全量构建前的闸门。
+      - name: Fast compile gate (KSU objects only)
+        run: |
+          cd kernel
+          export PATH="/usr/lib/ccache:$TCBIN:$PATH"
+          export ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1
+          export CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm
+          export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
+
+          make -j$(nproc) O=out odin_defconfig
+          ./scripts/config --file out/.config \
+            --enable KPROBES --enable KSU --enable KSU_SUSFS \
+            --enable KSU_SUSFS_SUS_PATH --enable KSU_SUSFS_SUS_MOUNT \
+            --enable KSU_SUSFS_SUS_KSTAT --enable KSU_SUSFS_SPOOF_UNAME \
+            --enable KSU_SUSFS_ENABLE_LOG --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --enable KSU_SUSFS_OPEN_REDIRECT --enable KSU_SUSFS_SUS_MAP
+          # BakaSU 的默认 hook 是 tracepoint（只支持 GKI 2.0/5.10+），
+          # 5.4 必须走 SUSFS inline；确保 TRACEPOINT 没被 defconfig 带进来。
+          ./scripts/config --file out/.config --disable KSU_TRACEPOINT_HOOK
+
+          # ---- 功耗调优：默认 governor = schedutil ----
+          bash ../ci/scripts/power-tune.sh "$PWD"
+          make -j$(nproc) O=out olddefconfig
+          bash ../ci/scripts/power-tune.sh "$PWD" verify
+          bash ../ci/scripts/sched-tune.sh "$PWD" verify
+
+          # flask.h 是 security/selinux 目录构建时才生成的，但 kernelsu 的
+          # objsec.h 会 include 它；先单独生成，避免竞态。
+          make -j$(nproc) O=out security/selinux/flask.h \
+            || make -j$(nproc) O=out security/selinux/
+
+          echo "=== gate: building KSU objects ==="
+          make -j$(nproc) O=out drivers/kernelsu/kernelsu.o \
+            || make -j$(nproc) O=out drivers/kernelsu/
+          echo "=== gate: PASS ==="
+
+      - name: Build kernel
+        run: |
+          cd kernel
+          export PATH="/usr/lib/ccache:$TCBIN:$PATH"
+          export ARCH=arm64 SUBARCH=arm64 LLVM=1 LLVM_IAS=1
+          export CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm
+          export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
+          clang --version
+
+          BAKA_VER="Baka-CL-$(date +%Y%m%d)-$(od -An -N2 -tu2 /dev/urandom | tr -d ' ')"
+          echo "BAKA_VER=$BAKA_VER" >> $GITHUB_ENV
+          echo "kernel localversion: -$BAKA_VER"
+
+          make -j$(nproc) O=out odin_defconfig
+          ./scripts/config --file out/.config \
+            --enable KPROBES --enable KSU --enable KSU_SUSFS \
+            --enable KSU_SUSFS_SUS_PATH --enable KSU_SUSFS_SUS_MOUNT \
+            --enable KSU_SUSFS_SUS_KSTAT --enable KSU_SUSFS_SPOOF_UNAME \
+            --enable KSU_SUSFS_ENABLE_LOG --enable KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            --enable KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            --enable KSU_SUSFS_OPEN_REDIRECT --enable KSU_SUSFS_SUS_MAP
+          ./scripts/config --file out/.config --disable KSU_TRACEPOINT_HOOK
+
+          # 不要 -g<sha> 后缀，只用我们自己的 Baka-CL 版本号
+          ./scripts/config --file out/.config --set-str LOCALVERSION ""
+          ./scripts/config --file out/.config --disable LOCALVERSION_AUTO
+
+          # ---- 功耗调优：默认 governor = schedutil ----
+          bash ../ci/scripts/power-tune.sh "$PWD"
+          make -j$(nproc) O=out olddefconfig
+          bash ../ci/scripts/power-tune.sh "$PWD" verify
+
+          # 与门禁同理：先确保 flask.h 已生成，避免与 selinux 目录构建竞态
+          make -j$(nproc) O=out security/selinux/flask.h \
+            || make -j$(nproc) O=out security/selinux/
+
+          echo "=== BakaSU / SUSFS config check ==="
+          grep -E 'CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPROBES' out/.config || true
+
+          MISSING=0
+          SYMS="CONFIG_KSU CONFIG_KSU_SUSFS CONFIG_KPROBES \
+                CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT \
+                CONFIG_KSU_SUSFS_SUS_MAP CONFIG_KSU_SUSFS_OPEN_REDIRECT"
+          for sym in $SYMS; do
+            if ! grep -qx "$sym=y" out/.config; then
+              echo "::error::$sym=y is missing from out/.config"
+              MISSING=1
+            fi
+          done
+          # 5.4 必须用 inline hook，不能落回 tracepoint
+          if grep -qx 'CONFIG_KSU_TRACEPOINT_HOOK=y' out/.config; then
+            echo "::error::CONFIG_KSU_TRACEPOINT_HOOK=y on a 5.4 kernel (GKI 2.0 only)"
+            MISSING=1
+          fi
+          if [ "$MISSING" -ne 0 ]; then
+            echo "--- dependency diagnostics ---"
+            grep -E '^CONFIG_(KSU|KPROBES|EXT4_FS|THREAD_INFO_IN_TASK|MODULES)' out/.config || true
+            exit 1
+          fi
+          echo "BakaSU/SUSFS config gate: PASS"
+
+          make -j$(nproc) O=out LOCALVERSION="-$BAKA_VER" Image Image.gz
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifact
+          cp kernel/out/arch/arm64/boot/Image artifact/Image
+          cp kernel/out/arch/arm64/boot/Image.gz artifact/Image.gz || true
+          cp kernel/out/.config artifact/kernel.config
+          (cd artifact && sha256sum Image > Image.sha256)
+          strings artifact/Image | grep -m3 'Linux version' || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: odin-bakasu-kernel
+          path: artifact/*
+          if-no-files-found: error
+
+      - name: Package AnyKernel3 zip
+        run: |
+          set -e
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git ak3
+          cd ak3
+          rm -rf .git .github patch README.md
+          mkdir -p patch
+          cp ../kernel/out/arch/arm64/boot/Image .
+          # ---- 可选：内置 ksud（embed_ksud=false 用于验证内核侧行为）----
+          EMBED_KSUD="${{ inputs.embed_ksud }}"
+          EMBED_KSUD="${EMBED_KSUD:-true}"
+          echo "EMBED_KSUD=$EMBED_KSUD"
+          echo "KSUD_EMBED=$EMBED_KSUD" >> $GITHUB_ENV
+          if [ "$EMBED_KSUD" = "true" ]; then
+            KSAPK_URL="${{ inputs.ksud_apk_url }}"
+            KSAPK_URL="${KSAPK_URL:-https://github.com/Baka-SU/BakaSU/releases/download/v4.2.0-rc3/ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk}"
+            if curl -fL --retry 3 --connect-timeout 20 -o /tmp/baka.apk "$KSAPK_URL"; then
+              if unzip -o -j /tmp/baka.apk "lib/arm64-v8a/libksud.so" -d /tmp/kx > /dev/null; then
+                cp /tmp/kx/libksud.so ./ksud
+                chmod 755 ./ksud
+                echo "ksud injected: $(stat -c %s ./ksud) bytes"
+              else
+                echo "::warning::libksud.so not found in APK"
+              fi
+            else
+              echo "::warning::APK download failed, AK3 will NOT contain ksud"
+            fi
+          else
+            echo "::notice::ksud NOT embedded - kernel-side test build"
+          fi
+          # 无论是否内嵌都追加 ksud 处理脚本：
+          #   包内有 ksud -> 安装/覆盖设备上的版本；
+          #   包内无 ksud -> 删除设备上的旧版本，由管理器自行安装。
+          cat ../ci/scripts/ak3-ksud.sh >> anykernel.sh
+
+          # ---- TWRP 显示：内核详细信息 ----
+          BUILD_STAMP=$(date -u +%Y%m%d-%H%MZ)
+          CLANG_STR=$(clang --version | head -1 | cut -c1-48)
+          if [ "$EMBED_KSUD" = "true" ]; then KSUD_STATE=embedded; else KSUD_STATE="not_embedded (stale removed)"; fi
+          cat >> anykernel.sh <<AK3EOF
+
+          ui_print " ";
+          ui_print "  odin (Xiaomi MIX 4) BakaSU kernel";
+          ui_print "  kernel : 5.4.302-$BAKA_VER";
+          ui_print "  build  : $BUILD_STAMP UTC";
+          ui_print "  clang  : $CLANG_STR";
+          ui_print "  root   : BakaSU (KernelSU based), SUSFS inline";
+          ui_print "  ksud   : $KSUD_STATE";
+          ui_print "  source : kernel_xiaomi_odin @ resukisu";
+          ui_print "  note   : boot only; vendor_boot modules untouched";
+          ui_print " ";
+          AK3EOF
+
+          sed -i "s/^kernel.string=.*/kernel.string=odin-BakaSU 5.4.302-$BAKA_VER/" anykernel.sh
+          sed -i "s/^device.name1=.*/device.name1=odin/" anykernel.sh
+          sed -i "s/^device.name2=.*/device.name2=/" anykernel.sh
+          sed -i "s/^device.name3=.*/device.name3=/" anykernel.sh
+          sed -i "s/^device.name4=.*/device.name4=/" anykernel.sh
+          sed -i "s/^device.name5=.*/device.name5=/" anykernel.sh
+          sed -i "s#^BLOCK=.*#BLOCK=/dev/block/bootdevice/by-name/boot;#" anykernel.sh
+          sed -i "s/^IS_SLOT_DEVICE=.*/IS_SLOT_DEVICE=1;/" anykernel.sh
+          sed -i '/^backup_file /d;/^replace_string /d;/^insert_line /d;/^append_file /d;/^patch_fstab /d' anykernel.sh
+          chmod +x anykernel.sh
+          NAME="odin-BakaSU-$(date +%Y%m%d)-run${GITHUB_RUN_NUMBER}"
+          zip -r9 "../${NAME}.zip" . -x "*.git*" > /dev/null
+          cd ..
+          ls -lh *.zip
+          echo "AK3_NAME=${NAME}" >> $GITHUB_ENV
+
+      - name: Publish test release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: odin-bakasu-${{ github.run_number }}
+          name: odin BakaSU kernel test build
+          body: |
+            odin (Xiaomi MIX 4) BakaSU built-in - TEST BUILD
+
+            NOT VERIFIED ON DEVICE. Flash at your own risk.
+
+            - Kernel 5.4.302-${{ env.BAKA_VER }}, ZyC clang 14.0.6
+            - Kernel source: Inkypen79/kernel_xiaomi_odin @ resukisu (SUSFS + KSU hooks)
+            - Root: BakaSU ${{ inputs.bakasu_ref }} (KernelSU based, SUSFS inline hook)
+            - BakaSU manager signature is built into the kernel; no custom signature size/hash needed
+            - Package: AnyKernel3 zip (boot partition, device odin)
+            - ksud embedded: ${{ env.KSUD_EMBED || 'false' }}
+
+            Install: flash in TWRP or a kernel flasher app.
+            Manager: BakaSU (ReSukiSU v4.2.0-rc3 line) matching the embedded signature.
+            Rollback: keep a stock boot.img backup.
+          files: ${{ github.workspace }}/${{ env.AK3_NAME }}.zip
+          prerelease: true
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
