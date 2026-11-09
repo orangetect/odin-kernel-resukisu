@@ -74,11 +74,21 @@ jobs:
               >> kernel/arch/arm64/configs/odin_defconfig || true
           fi
 
+          # ---- WiFi 修复：清理外部配置中将 WiFi 驱动降级为模块 (=m) 的指令 ----
+          sed -i '/CONFIG_QCA_CLD_WLAN/d' kernel/arch/arm64/configs/odin_defconfig
+          sed -i '/CONFIG_CNSS2=m/d' kernel/arch/arm64/configs/odin_defconfig
+          cat >> kernel/arch/arm64/configs/odin_defconfig << 'EOF'
+          CONFIG_CFG80211=y
+          CONFIG_CNSS2=y
+          CONFIG_QCA_CLD_WLAN=y
+          CONFIG_QCA_CLD_WLAN_PROFILE="default"
+          EOF
+
       # 功耗调优：内核调度源码补丁（input boost 默认关、io-is-busy 默认关、
       # schedutil 强制 PELT 信号路径——WALT 信号路径在本机会卡小米 logo）。
       - name: Scheduler power patches (input-boost off, io-is-busy off, schedutil PELT)
         run: |
-          bash ci/scripts/sched-tune.sh "$PWD/kernel" || true
+          bash ci/scripts/sched-tune.sh "$PWD/kernel"
 
       - name: Clone FinaSU into KernelSU/
         run: |
@@ -90,25 +100,15 @@ jobs:
       - name: Integrate SUSFS 5.4 into FinaSU kernel tree
         run: |
           chmod +x ci/scripts/susfs-setup.sh
-          # susfs-setup 的锚点落后于 FinaSU master（如 kernel_umount.c 已改 2 参
-          # 数签名），允许它部分失败；preflight 会补齐缺口并在验证阶段兜底。
           KDIR_OVERRIDE="$PWD/kernel" bash ci/scripts/susfs-setup.sh \
             || echo "::warning::susfs-setup partially applied; preflight compensates"
 
-      # FinaSU v1.4.2+ 管理器的 ksud 要求内核 SUSFS 版本字符串精确等于 v2.3.0，
-      # 否则判定 unknown_protocol（SUSFS 页只读、全功能不可用）。内核树是
-      # v2.1.0，但 wire 协议（CMD 编号 + st_susfs 结构）与 v2.3.0 完全兼容，
-      # 故让内核如实汇报 v2.3.0，并顺手修 ctime 伪装标志的笔误。
       - name: Point kernel SUSFS at v2.3.0 wire protocol (FinaSU manager)
-        if: ${{ inputs.disable_susfs != 'true' }}
         run: |
           chmod +x ci/scripts/susfs-version.sh
           bash ci/scripts/susfs-version.sh "$PWD/kernel"
 
-      # 让 spoof_uname 同时覆盖 /proc/version 与 /proc/sys/kernel/{osrelease,version}，
-      # 使系统「内核版本」显示与软件读取也显示伪装值（默认只 hook uname() 系统调用）。
       - name: SUSFS uname spoof for /proc/version and osrelease
-        if: ${{ inputs.disable_susfs != 'true' }}
         run: |
           chmod +x ci/scripts/susfs-uname-proc.sh
           bash ci/scripts/susfs-uname-proc.sh "$PWD/kernel"
@@ -120,7 +120,6 @@ jobs:
           DISABLE_SUSFS="${{ inputs.disable_susfs || 'false' }}" \
             bash ci/scripts/preflight.sh "$PWD/kernel"
 
-      # ksud 不在时把 su 变成 /system/bin/sh（SukiSU 同款拦不住 root）。
       - name: Fallback su -> /system/bin/sh when ksud missing
         run: |
           chmod +x ci/scripts/ksu-su-fallback.sh
@@ -181,15 +180,12 @@ jobs:
           echo "TCBIN=$TCDIR" >> $GITHUB_ENV
           "$TCDIR/clang" --version
 
-      # 变体二分用缓存：同一 (disable_preinit, disable_susfs) 组合复用编译缓存，
-      # 后续变体构建可从 ~28 分钟压到 ~10 分钟（只重编 KSU + 链接）。
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: odin-${{ inputs.disable_preinit }}-${{ inputs.disable_susfs }}
+          key: odin-wifi-${{ inputs.disable_preinit }}-${{ inputs.disable_susfs }}
           max-size: 2G
 
-      # 快速语法门：只编 KSU 子系统，~3-5 分钟暴露编译错误，全量构建前的闸门。
       - name: Fast compile gate (KSU objects only)
         run: |
           cd kernel
@@ -199,7 +195,15 @@ jobs:
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
 
           make -j$(nproc) O=out odin_defconfig
-          ./scripts/config --file out/.config --disable MACH_XIAOMI_VENUS --enable MACH_XIAOMI_ODIN
+          ./scripts/config --file out/.config \
+            --disable MACH_XIAOMI_VENUS \
+            --enable MACH_XIAOMI_ODIN \
+            --enable CFG80211 \
+            --enable CNSS2 \
+            --enable QCA_CLD_WLAN \
+            --set-str QCA_CLD_WLAN_PROFILE "default" \
+            --disable MODULE_SIG_FORCE \
+            --disable MODVERSIONS
 
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then
             ./scripts/config --file out/.config \
@@ -226,8 +230,6 @@ jobs:
           bash ../ci/scripts/power-tune.sh "$PWD" verify
           bash ../ci/scripts/sched-tune.sh "$PWD" verify
 
-          # flask.h 是 security/selinux 目录构建时才生成的（out/security/selinux/flask.h），
-          # 但 kernelsu 的 objsec.h 会 include 它；先单独生成，避免竞态。
           make -j$(nproc) O=out security/selinux/flask.h \
             || make -j$(nproc) O=out security/selinux/
 
@@ -245,13 +247,20 @@ jobs:
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip READELF=llvm-readelf
           clang --version
 
-          # 内核版本后缀：5.4.302-Neko-CL-<日期>-<随机>
           NEKO_VER="Neko-CL-$(date +%Y%m%d)-$(od -An -N2 -tu2 /dev/urandom | tr -d ' ')"
           echo "NEKO_VER=$NEKO_VER" >> $GITHUB_ENV
           echo "kernel localversion: -$NEKO_VER"
 
           make -j$(nproc) O=out odin_defconfig
-          ./scripts/config --file out/.config --disable MACH_XIAOMI_VENUS --enable MACH_XIAOMI_ODIN
+          ./scripts/config --file out/.config \
+            --disable MACH_XIAOMI_VENUS \
+            --enable MACH_XIAOMI_ODIN \
+            --enable CFG80211 \
+            --enable CNSS2 \
+            --enable QCA_CLD_WLAN \
+            --set-str QCA_CLD_WLAN_PROFILE "default" \
+            --disable MODULE_SIG_FORCE \
+            --disable MODVERSIONS
 
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then
             ./scripts/config --file out/.config \
@@ -273,21 +282,18 @@ jobs:
               --enable KSU_DYNAMIC_MANAGER
           fi
 
-          # 不要 -g<sha> 后缀，只用我们自己的 Neko-CL 版本号
           ./scripts/config --file out/.config --set-str LOCALVERSION ""
           ./scripts/config --file out/.config --disable LOCALVERSION_AUTO
 
-          # ---- 功耗调优：默认 governor = schedutil ----
           bash ../ci/scripts/power-tune.sh "$PWD"
           make -j$(nproc) O=out olddefconfig
           bash ../ci/scripts/power-tune.sh "$PWD" verify
 
-          # 与门禁同理：先确保 flask.h 已生成，避免与 selinux 目录构建竞态
           make -j$(nproc) O=out security/selinux/flask.h \
             || make -j$(nproc) O=out security/selinux/
 
-          echo "=== SUSFS / KSU / Device config check ==="
-          grep -E 'CONFIG_MACH_XIAOMI|CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPROBES|CONFIG_THREAD_INFO' out/.config || true
+          echo "=== SUSFS / KSU / WiFi / Device config check ==="
+          grep -E 'CONFIG_MACH_XIAOMI|CONFIG_QCA_CLD_WLAN|CONFIG_CNSS2|CONFIG_MODVERSIONS|CONFIG_MODULE_SIG|CONFIG_KSU|CONFIG_SUSFS|CONFIG_KPROBES' out/.config || true
 
           if grep -qx "CONFIG_MACH_XIAOMI_VENUS=y" out/.config; then
             echo "::error::CONFIG_MACH_XIAOMI_VENUS=y is still active! This will break odin hardware."
@@ -307,7 +313,6 @@ jobs:
               MISSING=1
             fi
           done
-          # ---- 功耗调优门禁 ----
           bash ../ci/scripts/power-tune.sh "$PWD" verify || MISSING=1
           bash ../ci/scripts/sched-tune.sh "$PWD" verify || MISSING=1
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then
@@ -326,13 +331,12 @@ jobs:
           fi
           echo "KSU/SUSFS config gate: PASS"
 
-          # D1 修补：不传 KSU_SECOND_SIGNATURE_RELEASE=1 时，
-          # FINASU_TRUSTED_* 回落到 slot1（KSU 官方签名），slot2 白注入。
+          # 同时构建 Image、dtbs 与 modules（若源码树将部分驱动锁死为 =m，一并产出 .ko）
           make -j$(nproc) O=out LOCALVERSION="-$NEKO_VER" \
             KSU_SECOND_SIGNATURE_RELEASE=1 \
             KSU_EXPECTED_SIZE2=716 \
             KSU_EXPECTED_HASH2=2d89b50aaf1db013c2b6738f973f48b62ea21a3a8d7216bfec3521065d448458 \
-            Image Image.gz dtbs
+            Image Image.gz dtbs modules
 
       - name: Collect artifacts
         run: |
@@ -340,6 +344,8 @@ jobs:
           cp kernel/out/arch/arm64/boot/Image artifact/Image
           cp kernel/out/arch/arm64/boot/Image.gz artifact/Image.gz || true
           cp kernel/out/.config artifact/kernel.config
+          find kernel/out/arch/arm64/boot/dts -name "*.dtb" -exec cat {} + > artifact/dtb 2>/dev/null || true
+          find kernel/out -name "*.ko" -exec cp {} artifact/ \; 2>/dev/null || true
           (cd artifact && sha256sum Image > Image.sha256)
           strings artifact/Image | grep -m3 'Linux version' || true
 
@@ -358,7 +364,14 @@ jobs:
           rm -rf .git .github patch README.md
           mkdir -p patch
           cp ../kernel/out/arch/arm64/boot/Image .
-          # ---- 可选：内置 ksud（embed_ksud=false 用于验证内核侧 su fallback）----
+
+          # ---- 打包 DTB：确保 CNSS2 / WiFi 设备树节点与新编译内核匹配 ----
+          if [ -s ../artifact/dtb ]; then
+            cp ../artifact/dtb ./dtb
+            echo "DTB packaged: $(stat -c %s ./dtb) bytes"
+          fi
+
+          # ---- 可选：内置 ksud ----
           EMBED_KSUD="${{ inputs.embed_ksud }}"
           EMBED_KSUD="${EMBED_KSUD:-true}"
           echo "EMBED_KSUD=$EMBED_KSUD"
@@ -379,18 +392,12 @@ jobs:
           else
             echo "::notice::ksud NOT embedded - kernel-side su fallback test build"
           fi
-          # 无论是否内嵌都追加 ksud 处理脚本：
-          #   包内有 ksud -> 安装/覆盖设备上的版本；
-          #   包内无 ksud -> 删除设备上的旧版本（旧 ksud + 新管理器会后台重试，
-          #   实测空载 2.65W vs 匹配版本 1.32W）。
           cat ../ci/scripts/ak3-ksud.sh >> anykernel.sh
 
-          # ---- TWRP 显示：内核详细信息 + 共创者 ----
           BUILD_STAMP=$(date -u +%Y%m%d-%H%MZ)
           CLANG_STR=$(clang --version | head -1 | cut -c1-48)
           if [ "${{ inputs.disable_susfs || 'false' }}" = "true" ]; then SUSFS_STATE=disabled; else SUSFS_STATE=enabled; fi
           if [ "$EMBED_KSUD" = "true" ]; then KSUD_STATE=embedded; else KSUD_STATE="not_embedded (stale removed)"; fi
-          # 使用 <<-AK3EOF 允许脚本内使用 Tab 缩进并确保结束符正常闭合
           cat >> anykernel.sh <<-AK3EOF
 
           ui_print " ";
@@ -401,6 +408,7 @@ jobs:
           ui_print "  root   : FinaSU / KernelSU, signature slot2";
           ui_print "  susfs  : $SUSFS_STATE";
           ui_print "  ksud   : $KSUD_STATE";
+          ui_print "  wifi   : QCA_CLD_WLAN built-in + DTB";
           ui_print "  author : cvbyisme & LuNanzhi (odin port)";
           ui_print " ";
           AK3EOF
@@ -429,9 +437,8 @@ jobs:
           body: |
             odin (Xiaomi MIX 4) FinaSU built-in - TEST BUILD
 
-            NOT VERIFIED ON DEVICE. Flash at your own risk.
-
             - Kernel 5.4.302-${{ env.NEKO_VER }}, ZyC clang 14.0.6
+            - WiFi fix: QCA_CLD_WLAN=y + CNSS2=y + DTB packaged + MODVERSIONS disabled
             - KSU_SECOND_SIGNATURE_RELEASE=1 (slot2 = FinaSU release key, size 716)
             - preflight v2: 5.4 shim headers + global -include + devpts/umount retarget
             - Package: AnyKernel3 zip
